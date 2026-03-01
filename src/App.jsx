@@ -11,6 +11,7 @@ import DebtPlan        from "./components/DebtPlan";
 import TradeTab        from "./components/TradeTab";
 import AccountsTab     from "./components/AccountsTab";
 import MaintainersTab  from "./components/MaintainersTab";
+import GastosTab       from "./components/GastosTab";
 import {
   ACCOUNTS_INIT, CLOSED_INIT, OPEN_INIT,
   DEFAULT_LEV, WATCHLIST_INIT, DEFAULT_R_VALUES, REQUIRED_TRADE_FIELDS,
@@ -309,6 +310,7 @@ export default function App() {
     { id:"calc",      label:"🎯 Risk Calc" },
     { id:"market",    label:"🌐 Market" },
     { id:"debts",     label:"💰 Deudas" },
+    { id:"gastos",    label:"💸 Gastos" },
     { id:"trade",     label:"➕ Trade",         badge: openPositions.length },
     { id:"accounts",  label:"🔑 Cuentas" },
     { id:"maint",     label:"⚙️ Maintainers" },
@@ -348,6 +350,7 @@ export default function App() {
         {tab === "market"    && <MarketTab watchlist={watchlist} setWatchlist={setWL} prices={prices} loading={loading} refresh={refresh} proxyOk={proxyOk} toast={toast}/>}
         {tab === "debts"     && <DebtPlan rValues={rValues} accounts={accounts}/>}
         {tab === "trade"     && <TradeTab onAdd={addClosed} accounts={accounts} openPositions={openPositions} setOpenPositions={setOP} leverageOpts={leverageOpts} callOpts={callOpts} toast={toast} prices={prices} sendTg={sendTg} dbConfig={dbConfig}/>}
+        {tab === "gastos"    && <GastosTab dbConfig={dbConfig} toast={toast}/>}
         {tab === "accounts"  && <AccountsTab accounts={accounts} setAccounts={setAccounts} toast={toast}/>}
         {tab === "maint"     && <MaintainersTab accounts={accounts} leverageOpts={leverageOpts} setLeverageOpts={setLev} callOpts={callOpts} setCallOpts={setCallOpts} rValues={rValues} setRValues={setRV} sheetsConfig={sheetsConfig} setSheetsConfig={setSC} dbConfig={dbConfig} setDbConfig={setDBC} tgConfig={tgConfig} setTgConfig={setTgConfig} toast={toast}/>}
       </div>

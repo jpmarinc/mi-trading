@@ -91,6 +91,7 @@ src/
 25. **Call dropdown no muestra valor actual** → Si el trade tiene `source` que no está en `callOpts` (ej: "Binance Position Sync"), el select debe renderizar la opción actual como primera opción condicional: `{vals.source && !callOpts.includes(vals.source) && <option value={vals.source}>{vals.source}</option>}`.
 26. **position:relative en th de tabla** → Algunos navegadores ignoran `position:relative` en `<th>`. Usar un `<div style={{position:"relative",display:"inline-block"}}>` wrapper dentro del th para posicionar dropdowns correctamente.
 27. **SL/TP -4120 — migración obligatoria a Algo Order API** → Desde nov-2025, Binance migró STOP_MARKET/TAKE_PROFIT_MARKET al endpoint `fapi/v1/algoOrder`. El endpoint `fapi/v1/order` devuelve -4120 para estas órdenes en TODAS las cuentas. Fix: usar `POST /api/binance/futures/algoOrder` con `algoType=CONDITIONAL`, `triggerPrice` (no `stopPrice`), y `closePosition=true` (lowercase). Ref: https://github.com/freqtrade/freqtrade/issues/12610
+28. **Reconciliación BN: side y commission** → `t.buyer` en `userTrades` es `true` cuando la orden es BUY. En un closing trade, BUY = cerrar SHORT → tipo "Short". SELL = cerrar LONG → tipo "Long". La comisión puede estar en BNB (`commissionAsset`); solo restar al PnL si `commissionAsset === "USDT"`, de lo contrario el importe está en BNB y se restaría mal.
 
 ---
 

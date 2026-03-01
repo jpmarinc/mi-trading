@@ -1008,6 +1008,235 @@ app.post("/api/db/fix-bn-fees", async (req, res) => {
   } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// MÓDULO GASTOS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Migrar schema de gastos (idempotente) ─────────────────────────────────────
+// POST /api/gastos/migrate-schema  { config }
+app.post("/api/gastos/migrate-schema", async (req, res) => {
+  const { config } = req.body;
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS gasto_categorias (
+        id        BIGSERIAL PRIMARY KEY,
+        nombre    VARCHAR(100) NOT NULL UNIQUE,
+        icono     VARCHAR(10)  DEFAULT '💰',
+        orden     INT          DEFAULT 0,
+        created_at TIMESTAMP  DEFAULT NOW()
+      );
+      CREATE TABLE IF NOT EXISTS gastos (
+        id               BIGSERIAL PRIMARY KEY,
+        fecha            DATE           NOT NULL,
+        importe          DECIMAL(12,2)  NOT NULL,
+        moneda           VARCHAR(10)    NOT NULL DEFAULT 'CLP',
+        concepto         TEXT,
+        entidad          VARCHAR(100),
+        nombre_producto  VARCHAR(100),
+        tipo_producto    VARCHAR(50),
+        tipo_movimiento  VARCHAR(50)    NOT NULL DEFAULT 'Cargo',
+        categoria        VARCHAR(100)   NOT NULL,
+        nota             VARCHAR(255),
+        usd_equiv        DECIMAL(12,4),
+        created_at       TIMESTAMP      DEFAULT NOW(),
+        deleted_at       TIMESTAMP      DEFAULT NULL
+      );
+    `);
+    // Insertar categorías por defecto si la tabla está vacía
+    const cnt = await client.query("SELECT COUNT(*) FROM gasto_categorias");
+    if (parseInt(cnt.rows[0].count) === 0) {
+      const cats = [
+        ["Alimentación","🍔",1], ["Transporte","🚗",2], ["Arriendo","🏠",3],
+        ["Salud","🏥",4], ["Entretenimiento","🎬",5], ["Tecnología","💻",6],
+        ["Deuda","💳",7], ["Educación","📚",8], ["Ropa","👕",9], ["Otro","📦",10]
+      ];
+      for (const [nombre, icono, orden] of cats) {
+        await client.query(
+          "INSERT INTO gasto_categorias (nombre, icono, orden) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+          [nombre, icono, orden]
+        );
+      }
+    }
+    res.json({ ok: true, msg: "Schema gastos creado/verificado" });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+  finally { client.release(); }
+});
+
+// ── Categorías: listar ────────────────────────────────────────────────────────
+// GET /api/gastos/categorias?host=...&port=...&database=...&user=...&password=...
+app.get("/api/gastos/categorias", async (req, res) => {
+  const pool = getPool(req.query);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const r = await pool.query("SELECT * FROM gasto_categorias ORDER BY orden, nombre");
+    res.json({ ok: true, rows: r.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Categorías: crear ─────────────────────────────────────────────────────────
+// POST /api/gastos/categorias  { config, nombre, icono }
+app.post("/api/gastos/categorias", async (req, res) => {
+  const { config, nombre, icono = "📦" } = req.body;
+  if (!nombre?.trim()) return res.status(400).json({ error: "nombre requerido" });
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const r = await pool.query(
+      "INSERT INTO gasto_categorias (nombre, icono) VALUES ($1,$2) RETURNING *",
+      [nombre.trim(), icono]
+    );
+    res.json({ ok: true, row: r.rows[0] });
+  } catch(e) {
+    if (e.code === "23505") return res.status(409).json({ error: "Categoría ya existe" });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Categorías: eliminar ──────────────────────────────────────────────────────
+// DELETE /api/gastos/categorias/:id  body: { config }
+app.delete("/api/gastos/categorias/:id", async (req, res) => {
+  const { config } = req.body;
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    await pool.query("DELETE FROM gasto_categorias WHERE id = $1", [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Gastos: listar ────────────────────────────────────────────────────────────
+// POST /api/gastos/list  { config, fecha_inicio, fecha_fin, categoria, entidad, tipo_movimiento, limit, offset }
+app.post("/api/gastos/list", async (req, res) => {
+  const { config, fecha_inicio, fecha_fin, categoria, entidad, tipo_movimiento, limit = 100, offset = 0 } = req.body;
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const conditions = ["deleted_at IS NULL"];
+    const params = [];
+    if (fecha_inicio) { params.push(fecha_inicio); conditions.push(`fecha >= $${params.length}`); }
+    if (fecha_fin)    { params.push(fecha_fin);     conditions.push(`fecha <= $${params.length}`); }
+    if (categoria)    { params.push(categoria);     conditions.push(`categoria = $${params.length}`); }
+    if (entidad)      { params.push(entidad);       conditions.push(`entidad = $${params.length}`); }
+    if (tipo_movimiento) { params.push(tipo_movimiento); conditions.push(`tipo_movimiento = $${params.length}`); }
+    const where = conditions.join(" AND ");
+    params.push(limit, offset);
+    const [rows, cnt] = await Promise.all([
+      pool.query(`SELECT * FROM gastos WHERE ${where} ORDER BY fecha DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params),
+      pool.query(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN tipo_movimiento != 'Pago tarjeta' THEN importe ELSE 0 END),0) as total_real FROM gastos WHERE ${where}`, params.slice(0, -2)),
+    ]);
+    res.json({ ok: true, rows: rows.rows, total: parseInt(cnt.rows[0].count), total_real: parseFloat(cnt.rows[0].total_real) });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Gastos: crear ─────────────────────────────────────────────────────────────
+// POST /api/gastos  { config, fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento, categoria, nota, usd_equiv }
+app.post("/api/gastos", async (req, res) => {
+  const { config, fecha, importe, moneda = "CLP", concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento = "Cargo", categoria, nota, usd_equiv } = req.body;
+  if (!fecha || !importe || !categoria) return res.status(400).json({ error: "fecha, importe y categoria son requeridos" });
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const r = await pool.query(
+      `INSERT INTO gastos (fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento, categoria, nota, usd_equiv)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [fecha, parseFloat(importe), moneda, concepto || null, entidad || null, nombre_producto || null, tipo_producto || null, tipo_movimiento, categoria, nota || null, usd_equiv ? parseFloat(usd_equiv) : null]
+    );
+    res.json({ ok: true, row: r.rows[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Gastos: actualizar ────────────────────────────────────────────────────────
+// PUT /api/gastos/:id  { config, ...fields }
+app.put("/api/gastos/:id", async (req, res) => {
+  const { config, fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento, categoria, nota, usd_equiv } = req.body;
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const r = await pool.query(
+      `UPDATE gastos SET fecha=$1, importe=$2, moneda=$3, concepto=$4, entidad=$5, nombre_producto=$6, tipo_producto=$7, tipo_movimiento=$8, categoria=$9, nota=$10, usd_equiv=$11
+       WHERE id=$12 AND deleted_at IS NULL RETURNING *`,
+      [fecha, parseFloat(importe), moneda || "CLP", concepto || null, entidad || null, nombre_producto || null, tipo_producto || null, tipo_movimiento || "Cargo", categoria, nota || null, usd_equiv ? parseFloat(usd_equiv) : null, req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: "Gasto no encontrado" });
+    res.json({ ok: true, row: r.rows[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Gastos: soft delete ───────────────────────────────────────────────────────
+// DELETE /api/gastos/:id  body: { config }
+app.delete("/api/gastos/:id", async (req, res) => {
+  const { config } = req.body;
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    await pool.query("UPDATE gastos SET deleted_at = NOW() WHERE id = $1", [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Gastos: resumen mensual ───────────────────────────────────────────────────
+// POST /api/gastos/resumen  { config, year, month }
+// Retorna totales por categoría del mes, excluyendo tipo_movimiento = 'Pago tarjeta'
+app.post("/api/gastos/resumen", async (req, res) => {
+  const { config, year, month } = req.body;
+  if (!year || !month) return res.status(400).json({ error: "year y month requeridos" });
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const [byCat, byDay, totals] = await Promise.all([
+      pool.query(
+        `SELECT categoria, SUM(importe) as total, COUNT(*) as count
+         FROM gastos
+         WHERE EXTRACT(YEAR FROM fecha) = $1 AND EXTRACT(MONTH FROM fecha) = $2
+           AND tipo_movimiento != 'Pago tarjeta' AND deleted_at IS NULL
+         GROUP BY categoria ORDER BY total DESC`,
+        [year, month]
+      ),
+      pool.query(
+        `SELECT fecha::text as dia, SUM(importe) as total
+         FROM gastos
+         WHERE EXTRACT(YEAR FROM fecha) = $1 AND EXTRACT(MONTH FROM fecha) = $2
+           AND tipo_movimiento != 'Pago tarjeta' AND deleted_at IS NULL
+         GROUP BY fecha ORDER BY fecha`,
+        [year, month]
+      ),
+      pool.query(
+        `SELECT
+           COALESCE(SUM(CASE WHEN tipo_movimiento != 'Pago tarjeta' THEN importe ELSE 0 END),0) as total_mes,
+           COALESCE(SUM(CASE WHEN tipo_movimiento != 'Pago tarjeta' THEN usd_equiv ELSE 0 END),0) as total_usd
+         FROM gastos
+         WHERE EXTRACT(YEAR FROM fecha) = $1 AND EXTRACT(MONTH FROM fecha) = $2 AND deleted_at IS NULL`,
+        [year, month]
+      ),
+    ]);
+    res.json({
+      ok: true,
+      by_categoria: byCat.rows,
+      by_dia:       byDay.rows,
+      total_mes:    parseFloat(totals.rows[0].total_mes),
+      total_usd:    parseFloat(totals.rows[0].total_usd),
+    });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── USD/CLP rate via Yahoo Finance ────────────────────────────────────────────
+// GET /api/gastos/usd-rate
+app.get("/api/gastos/usd-rate", async (req, res) => {
+  try {
+    const r = await pf("https://query1.finance.yahoo.com/v8/finance/chart/CLP=X?interval=1d&range=1d");
+    const d = await r.json();
+    const price = d?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    if (!price) return res.status(502).json({ error: "Sin datos de Yahoo Finance" });
+    // CLP=X = precio de 1 USD en CLP
+    res.json({ ok: true, clp_per_usd: price });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+
 app.listen(PORT, () => {
   console.log(`\n✅  Proxy v4 → http://localhost:${PORT}`);
   console.log(`   Binance spot        → GET  /api/binance/prices?symbols=BTCUSDT`);
@@ -1030,5 +1259,11 @@ app.listen(PORT, () => {
   console.log(`   DB soft delete      → DELETE /api/db/trades/:id`);
   console.log(`   DB migrate schema   → POST /api/db/migrate-schema`);
   console.log(`   BN trade history    → POST /api/binance/futures/tradeHistory`);
-  console.log(`   DB import BN trades → POST /api/db/import-bn-trades\n`);
+  console.log(`   DB import BN trades → POST /api/db/import-bn-trades`);
+  console.log(`   Gastos migrate      → POST /api/gastos/migrate-schema`);
+  console.log(`   Gastos CRUD         → POST|PUT|DELETE /api/gastos`);
+  console.log(`   Gastos list         → POST /api/gastos/list`);
+  console.log(`   Gastos resumen      → POST /api/gastos/resumen`);
+  console.log(`   Gastos categorías   → GET|POST|DELETE /api/gastos/categorias`);
+  console.log(`   USD/CLP rate        → GET  /api/gastos/usd-rate\n`);
 });

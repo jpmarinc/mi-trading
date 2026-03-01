@@ -533,10 +533,12 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
       for (const t of d.trades) {
         const oid = String(t.orderId);
         if (!grouped[oid]) {
+          // buyer=true en closing trade → BUY → cerrando SHORT → tipo Short
+          // buyer=false en closing trade → SELL → cerrando LONG → tipo Long
           grouped[oid] = {
             bn_order_id: oid,
             asset:       t.symbol.replace(/USDT$/i, ""),
-            type:        t.buyer ? "Long" : "Short",
+            type:        t.buyer ? "Short" : "Long",
             account:     recAcc.id,
             entry:       parseFloat(t.price),
             pnl:         0,
@@ -546,13 +548,13 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
             order_type:  "Market",
             source:      "S/E",
             outcome:     null,
-            isClosing:   false, // true si algún fill tiene realizedPnl != 0
+            isClosing:   false,
           };
         }
-        // isClosing: detectar si es orden de cierre por realizedPnl individual del fill
-        // (no usar el total acumulado porque al restar commission puede ser != 0 en aperturas)
         if (Math.abs(parseFloat(t.realizedPnl || 0)) > 0) grouped[oid].isClosing = true;
-        grouped[oid].pnl += parseFloat(t.realizedPnl || 0) - parseFloat(t.commission || 0);
+        // Solo restar commission si está en USDT; si es BNB u otro asset no convertir
+        const commUsd = t.commissionAsset === "USDT" ? parseFloat(t.commission || 0) : 0;
+        grouped[oid].pnl += parseFloat(t.realizedPnl || 0) - commUsd;
         grouped[oid].qty += parseFloat(t.qty);
       }
       const trades = Object.values(grouped)

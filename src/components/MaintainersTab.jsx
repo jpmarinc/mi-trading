@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { PROXY, DEFAULT_LEV } from "../constants";
 
 export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts, callOpts, setCallOpts, rValues, setRValues, sheetsConfig, setSheetsConfig, dbConfig, setDbConfig, tgConfig, setTgConfig, toast }) {
@@ -16,12 +16,61 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
   const [sltpLoading, setSltpLoading] = useState(false);
   const [sltpResults, setSltpResults] = useState(null);
 
+  // ── Categorías de gastos (desde BD) ──────────────────────────────────────────
+  const [gastoCats, setGastoCats]   = useState([]);
+  const [newCatNombre, setNewCatN]  = useState("");
+  const [newCatIcono, setNewCatI]   = useState("📦");
+  const [savingCat, setSavingCat]   = useState(false);
+
+  const loadGastoCats = useCallback(async () => {
+    if (!dbConfig?.host || !dbConfig?.password) return;
+    try {
+      const cfg = dbConfig;
+      const params = new URLSearchParams({ host:cfg.host, port:cfg.port||5432, database:cfg.database, user:cfg.user, password:cfg.password });
+      const r = await fetch(`${PROXY}/api/gastos/categorias?${params}`);
+      const d = await r.json();
+      if (d.ok) setGastoCats(d.rows);
+    } catch { /* silent */ }
+  }, [dbConfig]);
+
+  useEffect(() => { if (tab === "gastocat") loadGastoCats(); }, [tab, dbConfig?.host]);
+
+  const addGastoCat = async () => {
+    if (!newCatNombre.trim()) return;
+    if (!dbConfig?.host || !dbConfig?.password) { toast.error("BD", "Configurá PostgreSQL primero"); return; }
+    setSavingCat(true);
+    try {
+      const r = await fetch(`${PROXY}/api/gastos/categorias`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ config: dbConfig, nombre: newCatNombre.trim(), icono: newCatIcono })
+      });
+      const d = await r.json();
+      if (d.ok) { setNewCatN(""); setNewCatI("📦"); loadGastoCats(); toast.success("Categorías", "Categoría creada"); }
+      else toast.error("BD", d.error);
+    } catch(e) { toast.error("BD", e.message); }
+    setSavingCat(false);
+  };
+
+  const deleteGastoCat = async (id, nombre) => {
+    if (!confirm(`¿Eliminar categoría "${nombre}"?`)) return;
+    try {
+      const r = await fetch(`${PROXY}/api/gastos/categorias/${id}`, {
+        method:"DELETE", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ config: dbConfig })
+      });
+      const d = await r.json();
+      if (d.ok) { loadGastoCats(); toast.success("Categorías", "Eliminada"); }
+      else toast.error("BD", d.error);
+    } catch(e) { toast.error("BD", e.message); }
+  };
+
   const subTabs = [
     { id:"r",        label:"📊 R Values" },
     { id:"leverage", label:"⚙️ Leverage" },
     { id:"call",     label:"📋 Call Options" },
     { id:"db",       label:"🐘 Base de Datos" },
     { id:"tg",       label:"✈️ Telegram" },
+    { id:"gastocat", label:"💸 Categ. Gastos" },
     { id:"sltp",     label:"🧪 Test SL/TP" },
     { id:"docs",     label:"📖 Code Map" },
   ];
@@ -214,6 +263,53 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
                 else toast.error("Telegram", d.msg);
               } catch(e) { toast.error("Telegram", "Proxy offline"); }
             }}>📤 Probar conexión</button>
+          </div>
+        </div>
+      )}
+
+      {/* CATEGORÍAS GASTOS */}
+      {tab === "gastocat" && (
+        <div>
+          <div className="al ai" style={{ fontSize:10, marginBottom:12 }}>
+            Categorías del módulo de gastos. Se almacenan en PostgreSQL y se usan en la tab 💸 Gastos.
+          </div>
+
+          {(!dbConfig?.host || !dbConfig?.password) && (
+            <p style={{ color:"#f97316", fontSize:12 }}>⚠️ Configurá PostgreSQL en la tab Base de Datos para gestionar categorías.</p>
+          )}
+
+          <div className="card">
+            <div className="ct">Agregar categoría</div>
+            <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap" }}>
+              <label className="fl">
+                <span className="lbl">Icono (emoji)</span>
+                <input className="inp" style={{ width:60 }} value={newCatIcono} onChange={e=>setNewCatI(e.target.value)} maxLength={4}/>
+              </label>
+              <label className="fl" style={{ flex:1, minWidth:150 }}>
+                <span className="lbl">Nombre</span>
+                <input className="inp" placeholder="Nombre de categoría" value={newCatNombre} onChange={e=>setNewCatN(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&addGastoCat()}/>
+              </label>
+              <button className="btn bp bsm" onClick={addGastoCat} disabled={savingCat||!newCatNombre.trim()}>
+                {savingCat?"...":"+ Agregar"}
+              </button>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginTop:10 }}>
+            <div className="ct">Categorías actuales</div>
+            {gastoCats.length === 0 && (
+              <p style={{ color:"#64748b", fontSize:12 }}>Sin categorías. Crea la primera o inicializa el schema desde 💸 Gastos.</p>
+            )}
+            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+              {gastoCats.map(c => (
+                <div key={c.id} style={{ display:"flex", alignItems:"center", gap:8, background:"#1e293b", borderRadius:6, padding:"6px 10px" }}>
+                  <span style={{ fontSize:18 }}>{c.icono}</span>
+                  <span style={{ flex:1, fontSize:13 }}>{c.nombre}</span>
+                  <button className="btn br bsm" style={{ padding:"2px 8px" }} onClick={() => deleteGastoCat(c.id, c.nombre)}>✕</button>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

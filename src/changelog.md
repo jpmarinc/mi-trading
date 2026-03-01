@@ -4,6 +4,52 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-01 — Sesión 12
+
+### Fix: Reconciliación Binance — side invertido + commission asset
+
+**TradeTab.jsx línea 539**
+- Root cause 1 (side): `t.buyer ? "Long" : "Short"` incorrecto. En un closing trade, `buyer=true` = BUY = cerrando SHORT → tipo "Short". Fix: `t.buyer ? "Short" : "Long"`.
+- Root cause 2 (PnL): commission se restaba siempre como USDT. Si el usuario paga fees en BNB, el valor en la respuesta está en BNB (no USDT) → PnL incorrecto. Fix: solo restar commission cuando `commissionAsset === "USDT"`.
+- Patrón #28 documentado en CLAUDE.md.
+
+### Nuevo: Módulo de Gastos (G1–G6)
+
+**proxy.cjs — endpoints gastos**
+- `POST /api/gastos/migrate-schema` — crea tablas `gastos` + `gasto_categorias` (idempotente). Inserta 10 categorías por defecto si la tabla está vacía.
+- `GET/POST/DELETE /api/gastos/categorias` — CRUD de categorías en BD.
+- `POST /api/gastos/list` — listado con filtros (fecha, categoría, tipo de movimiento, entidad). Retorna total y total_real (excluye pagos de tarjeta).
+- `POST /api/gastos` — crear gasto.
+- `PUT /api/gastos/:id` — editar gasto.
+- `DELETE /api/gastos/:id` — soft delete.
+- `POST /api/gastos/resumen` — agrupado por categoría + por día del mes, excluyendo "Pago tarjeta".
+- `GET /api/gastos/usd-rate` — tipo de cambio USD/CLP desde Yahoo Finance (CLP=X).
+
+**GastosTab.jsx — componente nuevo**
+- Subtab "📝 Nuevo gasto": formulario completo (fecha, importe, moneda, categoría, tipo movimiento, entidad, nombre/tipo producto, concepto, nota, USD equiv).
+- Auto-cálculo USD equiv al ingresar importe (usa rate de Yahoo Finance en tiempo real).
+- Subtab "📋 Lista": tabla con filtros por período, categoría y tipo de movimiento. Soft delete + edición inline. Total real (excl. pagos tarjeta) + equiv USD.
+- Subtab "📊 Resumen mensual": KPIs (total mes, total USD, top categoría), breakdown por categoría con barras de progreso y porcentaje, gráfico de barras por día.
+- Schema inicializado automáticamente al cargar el tab (sin intervención manual).
+
+**MaintainersTab.jsx — subtab "💸 Categ. Gastos"**
+- CRUD de categorías desde BD (nuevo subtab entre Telegram y Test SL/TP).
+- Agregar categoría con nombre + emoji, eliminar con confirmación.
+
+**App.jsx**
+- Import GastosTab + tab "💸 Gastos" en la nav + render `{tab === "gastos"}`.
+
+### Archivos modificados
+- `src/components/TradeTab.jsx`
+- `src/proxy.cjs`
+- `src/components/GastosTab.jsx` (nuevo)
+- `src/components/MaintainersTab.jsx`
+- `src/App.jsx`
+- `src/changelog.md`
+- `src/comentarios.md`
+
+---
+
 ## 2026-03-01 — Sesión 11
 
 ### Fixes
