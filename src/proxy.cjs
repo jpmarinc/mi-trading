@@ -911,13 +911,17 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
         [`symbol=${symbol}`, "incomeType=FUNDING_FEE", "limit=1000"], windows);
     } catch { /* tolerar */ }
 
-    // Mapas de fee por orderId (COMMISSION) y total funding del período
+    // Mapas de fee por orderId (COMMISSION) y lista de funding con timestamp
     const commByOrder = {};
     for (const e of incomeComm) {
       const oid = String(e.info);
       commByOrder[oid] = (commByOrder[oid] || 0) + parseFloat(e.income || 0); // negativo
     }
-    const totalFunding = incomeFunding.reduce((s, e) => s + parseFloat(e.income || 0), 0);
+    const fundingList = incomeFunding.map(e => ({
+      time: parseInt(e.time),
+      amount: parseFloat(e.income || 0),
+    }));
+    const totalFunding = fundingList.reduce((s, f) => s + f.amount, 0);
 
     // 4. Agrupar fills por orderId
     const byOrder = {};
@@ -942,15 +946,19 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
       const isClose = Math.abs(ord.realizedPnl) > 0.0001;
 
       if (!isClose) {
-        // Orden de apertura
+        // Orden de apertura — incluir fee de apertura en el PnL
         openQty += ord.qty;
+        const openComm = commByOrder[ord.oid] || 0;
         if (!curPos) {
           curPos = {
             // buyer=true en apertura → LONG; buyer=false → SHORT
             type: ord.buyer ? "Long" : "Short",
             entry: ord.price, openTime: ord.time,
-            pnl: 0, firstOid: null, closeTime: null,
+            pnl: openComm, firstOid: null, closeTime: null,
           };
+        } else {
+          // Apertura adicional (add-to-position)
+          curPos.pnl += openComm;
         }
       } else {
         // Orden de cierre
@@ -973,7 +981,11 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
         // Posición totalmente cerrada cuando closedQty ≈ openQty
         const diff = Math.abs(closedQty - openQty);
         if (diff < Math.max(openQty * 0.001, 0.0001)) {
-          const pnlNet = parseFloat(curPos.pnl.toFixed(4));
+          // Sumar funding fees que ocurrieron durante esta posición
+          const fundingForPos = fundingList
+            .filter(f => f.time >= curPos.openTime && f.time <= (curPos.closeTime || Date.now()))
+            .reduce((s, f) => s + f.amount, 0);
+          const pnlNet = parseFloat((curPos.pnl + fundingForPos).toFixed(4));
           positions.push({
             bn_order_id: curPos.firstOid,
             asset,

@@ -528,12 +528,11 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
       const d = await r.json();
       if (!d.ok) { toast.error("Binance", d.msg); setBnRecLoading(false); return; }
 
-      // El proxy ya devuelve posiciones limpias (position tracking + COMMISSION income)
-      // PnL = Closing PnL + Trading Fee (USDT). Funding fee del período en d.funding_period
+      // PnL = Closing PnL + Opening Fee + Closing Fees + Funding Fee proporcional (todo incluido)
       const trades = (d.trades || []).map(t => ({ ...t, account: recAcc.id }));
 
       if (d.funding_period && Math.abs(d.funding_period) > 0.001)
-        toast.info("Funding Fee", `Funding fee del período: ${d.funding_period > 0 ? "+" : ""}${d.funding_period} USDT (no incluido en PnL individual)`);
+        toast.info("Funding Fee", `Funding fee período: ${d.funding_period > 0 ? "+" : ""}${d.funding_period} USDT (ya incluido en cada posición)`);
 
       setBnRecTrades(trades);
       setBnRecSelected(new Set(trades.map(t => t.bn_order_id)));

@@ -4,6 +4,20 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-01 — Sesión 12 (iteración 3)
+
+### Fix: Reconciliación Binance — opening fee + funding fee por posición
+
+**proxy.cjs — `POST /api/binance/futures/tradeHistory`**
+- Root cause 3 (PnL): opening fee no se incluía en el PnL. Solo se sumaban comisiones de cierre. Fix: al procesar la orden de apertura se agrega `commByOrder[ord.oid]` al PnL de la posición.
+- Root cause 4 (PnL): funding fee solo se devolvía como total del período, sin atribuirla a cada posición. Fix: `fundingList` con timestamps → al cerrar cada posición, se suman los FUNDING_FEE entries cuyo `time` está dentro del `openTime–closeTime` de esa posición.
+- PnL ahora = Closing PnL + Opening Fee + Closing Fees + Funding Fee proporcional (igual a Binance Position History).
+
+**TradeTab.jsx**
+- Toast de funding fee actualizado: "ya incluido en cada posición".
+
+---
+
 ## 2026-03-01 — Sesión 12 (iteración 2)
 
 ### Mejoras formulario gastos (feedback)
