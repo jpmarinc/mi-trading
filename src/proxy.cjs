@@ -923,16 +923,27 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
     }));
     const totalFunding = fundingList.reduce((s, f) => s + f.amount, 0);
 
-    // 4. Agrupar fills por orderId
+    // 4. Agrupar fills por orderId — incluir commission directamente de los fills
     const byOrder = {};
     for (const f of fills) {
       const oid = String(f.orderId);
       if (!byOrder[oid]) {
-        byOrder[oid] = { oid, buyer: f.buyer, price: parseFloat(f.price), time: f.time, qty: 0, realizedPnl: 0 };
+        byOrder[oid] = { oid, buyer: f.buyer, price: parseFloat(f.price), time: f.time,
+                         qty: 0, realizedPnl: 0, commission: 0, commAsset: f.commissionAsset };
       }
       byOrder[oid].qty         += parseFloat(f.qty);
       byOrder[oid].realizedPnl += parseFloat(f.realizedPnl || 0);
+      byOrder[oid].commission  += parseFloat(f.commission  || 0);
+      byOrder[oid].commAsset    = f.commissionAsset; // mismo asset en todos los fills de una orden
     }
+
+    // Helper: fee en USDT para una orden. Prioriza commission directa de fills (USDT)
+    // para no depender de income API (puede fallar silenciosamente).
+    // Para accounts BNB, income API (commByOrder) ya devuelve el valor negativo en USDT.
+    const getCommUSDT = (ord) => {
+      if (ord.commAsset === "USDT") return -(ord.commission || 0); // negativo = costo
+      return commByOrder[ord.oid] || 0;                             // income API fallback
+    };
 
     // 5. Position tracking: agrega cierres parciales de la misma posición
     //    Abre: realizedPnl == 0 (apertura de posición)
@@ -948,7 +959,7 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
       if (!isClose) {
         // Orden de apertura — incluir fee de apertura en el PnL
         openQty += ord.qty;
-        const openComm = commByOrder[ord.oid] || 0;
+        const openComm = getCommUSDT(ord);
         if (!curPos) {
           curPos = {
             // buyer=true en apertura → LONG; buyer=false → SHORT
@@ -973,7 +984,7 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
           openQty = ord.qty; // asumir fully closed
         }
         closedQty += ord.qty;
-        const comm = commByOrder[ord.oid] || 0;
+        const comm = getCommUSDT(ord);
         curPos.pnl      += ord.realizedPnl + comm;
         curPos.closeTime = ord.time;
         if (!curPos.firstOid) curPos.firstOid = ord.oid;
