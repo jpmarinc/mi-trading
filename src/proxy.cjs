@@ -1028,6 +1028,13 @@ app.post("/api/gastos/migrate-schema", async (req, res) => {
         orden     INT          DEFAULT 0,
         created_at TIMESTAMP  DEFAULT NOW()
       );
+      CREATE TABLE IF NOT EXISTS gasto_config (
+        id     BIGSERIAL PRIMARY KEY,
+        tipo   VARCHAR(50)  NOT NULL,
+        nombre VARCHAR(100) NOT NULL,
+        orden  INT          DEFAULT 0,
+        UNIQUE(tipo, nombre)
+      );
       CREATE TABLE IF NOT EXISTS gastos (
         id               BIGSERIAL PRIMARY KEY,
         fecha            DATE           NOT NULL,
@@ -1036,8 +1043,7 @@ app.post("/api/gastos/migrate-schema", async (req, res) => {
         concepto         TEXT,
         entidad          VARCHAR(100),
         nombre_producto  VARCHAR(100),
-        tipo_producto    VARCHAR(50),
-        tipo_movimiento  VARCHAR(50)    NOT NULL DEFAULT 'Cargo',
+        tipo_movimiento  VARCHAR(50)    NOT NULL DEFAULT 'Gasto',
         categoria        VARCHAR(100)   NOT NULL,
         nota             VARCHAR(255),
         usd_equiv        DECIMAL(12,4),
@@ -1053,12 +1059,19 @@ app.post("/api/gastos/migrate-schema", async (req, res) => {
         ["Salud","🏥",4], ["Entretenimiento","🎬",5], ["Tecnología","💻",6],
         ["Deuda","💳",7], ["Educación","📚",8], ["Ropa","👕",9], ["Otro","📦",10]
       ];
-      for (const [nombre, icono, orden] of cats) {
-        await client.query(
-          "INSERT INTO gasto_categorias (nombre, icono, orden) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
-          [nombre, icono, orden]
-        );
-      }
+      for (const [nombre, icono, orden] of cats)
+        await client.query("INSERT INTO gasto_categorias (nombre,icono,orden) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [nombre,icono,orden]);
+    }
+    // Insertar config por defecto si la tabla está vacía
+    const cntCfg = await client.query("SELECT COUNT(*) FROM gasto_config");
+    if (parseInt(cntCfg.rows[0].count) === 0) {
+      const defaults = [
+        ["tipo_movimiento","Gasto",1], ["tipo_movimiento","Ingreso",2], ["tipo_movimiento","No computable",3],
+        ["entidad","Itaú",1], ["entidad","Scotiabank",2], ["entidad","Tenpo",3],
+        ["producto","Tarjeta Mastercard Tenpo",1], ["producto","Tarjeta BCI Black",2], ["producto","Efectivo",3],
+      ];
+      for (const [tipo, nombre, orden] of defaults)
+        await client.query("INSERT INTO gasto_config (tipo,nombre,orden) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING", [tipo,nombre,orden]);
     }
     res.json({ ok: true, msg: "Schema gastos creado/verificado" });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1107,6 +1120,52 @@ app.delete("/api/gastos/categorias/:id", async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── Config gastos: listar por tipo ───────────────────────────────────────────
+// GET /api/gastos/config?tipo=tipo_movimiento&host=...
+app.get("/api/gastos/config", async (req, res) => {
+  const { tipo, ...dbParams } = req.query;
+  const pool = getPool(dbParams);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const q = tipo
+      ? pool.query("SELECT * FROM gasto_config WHERE tipo=$1 ORDER BY orden,nombre", [tipo])
+      : pool.query("SELECT * FROM gasto_config ORDER BY tipo,orden,nombre");
+    const r = await q;
+    res.json({ ok: true, rows: r.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Config gastos: crear ──────────────────────────────────────────────────────
+// POST /api/gastos/config  { config, tipo, nombre }
+app.post("/api/gastos/config", async (req, res) => {
+  const { config, tipo, nombre } = req.body;
+  if (!tipo || !nombre?.trim()) return res.status(400).json({ error: "tipo y nombre requeridos" });
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    const r = await pool.query(
+      "INSERT INTO gasto_config (tipo, nombre) VALUES ($1,$2) RETURNING *",
+      [tipo, nombre.trim()]
+    );
+    res.json({ ok: true, row: r.rows[0] });
+  } catch(e) {
+    if (e.code === "23505") return res.status(409).json({ error: "Ya existe" });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Config gastos: eliminar ───────────────────────────────────────────────────
+// DELETE /api/gastos/config/:id  body: { config }
+app.delete("/api/gastos/config/:id", async (req, res) => {
+  const { config } = req.body;
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ error: "pg no instalado" });
+  try {
+    await pool.query("DELETE FROM gasto_config WHERE id = $1", [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── Gastos: listar ────────────────────────────────────────────────────────────
 // POST /api/gastos/list  { config, fecha_inicio, fecha_fin, categoria, entidad, tipo_movimiento, limit, offset }
 app.post("/api/gastos/list", async (req, res) => {
@@ -1125,7 +1184,7 @@ app.post("/api/gastos/list", async (req, res) => {
     params.push(limit, offset);
     const [rows, cnt] = await Promise.all([
       pool.query(`SELECT * FROM gastos WHERE ${where} ORDER BY fecha DESC, created_at DESC LIMIT $${params.length - 1} OFFSET $${params.length}`, params),
-      pool.query(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN tipo_movimiento != 'Pago tarjeta' THEN importe ELSE 0 END),0) as total_real FROM gastos WHERE ${where}`, params.slice(0, -2)),
+      pool.query(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN tipo_movimiento = 'Gasto' THEN importe ELSE 0 END),0) as total_real FROM gastos WHERE ${where}`, params.slice(0, -2)),
     ]);
     res.json({ ok: true, rows: rows.rows, total: parseInt(cnt.rows[0].count), total_real: parseFloat(cnt.rows[0].total_real) });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1191,7 +1250,7 @@ app.post("/api/gastos/resumen", async (req, res) => {
         `SELECT categoria, SUM(importe) as total, COUNT(*) as count
          FROM gastos
          WHERE EXTRACT(YEAR FROM fecha) = $1 AND EXTRACT(MONTH FROM fecha) = $2
-           AND tipo_movimiento != 'Pago tarjeta' AND deleted_at IS NULL
+           AND tipo_movimiento = 'Gasto' AND deleted_at IS NULL
          GROUP BY categoria ORDER BY total DESC`,
         [year, month]
       ),
@@ -1199,14 +1258,14 @@ app.post("/api/gastos/resumen", async (req, res) => {
         `SELECT fecha::text as dia, SUM(importe) as total
          FROM gastos
          WHERE EXTRACT(YEAR FROM fecha) = $1 AND EXTRACT(MONTH FROM fecha) = $2
-           AND tipo_movimiento != 'Pago tarjeta' AND deleted_at IS NULL
+           AND tipo_movimiento = 'Gasto' AND deleted_at IS NULL
          GROUP BY fecha ORDER BY fecha`,
         [year, month]
       ),
       pool.query(
         `SELECT
-           COALESCE(SUM(CASE WHEN tipo_movimiento != 'Pago tarjeta' THEN importe ELSE 0 END),0) as total_mes,
-           COALESCE(SUM(CASE WHEN tipo_movimiento != 'Pago tarjeta' THEN usd_equiv ELSE 0 END),0) as total_usd
+           COALESCE(SUM(CASE WHEN tipo_movimiento = 'Gasto' THEN importe ELSE 0 END),0) as total_mes,
+           COALESCE(SUM(CASE WHEN tipo_movimiento = 'Gasto' THEN usd_equiv ELSE 0 END),0) as total_usd
          FROM gastos
          WHERE EXTRACT(YEAR FROM fecha) = $1 AND EXTRACT(MONTH FROM fecha) = $2 AND deleted_at IS NULL`,
         [year, month]

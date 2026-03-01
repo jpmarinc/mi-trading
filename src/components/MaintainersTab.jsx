@@ -16,24 +16,69 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
   const [sltpLoading, setSltpLoading] = useState(false);
   const [sltpResults, setSltpResults] = useState(null);
 
-  // ── Categorías de gastos (desde BD) ──────────────────────────────────────────
-  const [gastoCats, setGastoCats]   = useState([]);
-  const [newCatNombre, setNewCatN]  = useState("");
-  const [newCatIcono, setNewCatI]   = useState("📦");
-  const [savingCat, setSavingCat]   = useState(false);
+  // ── Categorías y config de gastos (desde BD) ─────────────────────────────────
+  const [gastoCats, setGastoCats]       = useState([]);
+  const [newCatNombre, setNewCatN]      = useState("");
+  const [newCatIcono, setNewCatI]       = useState("📦");
+  const [savingCat, setSavingCat]       = useState(false);
+  const [gastoConfig, setGastoConfig]   = useState([]); // todos los gasto_config rows
+  const [newConfigVal, setNewConfigVal] = useState({ tipo_movimiento:"", entidad:"", producto:"" });
+  const [savingCfg, setSavingCfg]       = useState("");
+
+  function dbQs(cfg) {
+    return new URLSearchParams({ host:cfg.host, port:cfg.port||5432, database:cfg.database, user:cfg.user, password:cfg.password });
+  }
 
   const loadGastoCats = useCallback(async () => {
     if (!dbConfig?.host || !dbConfig?.password) return;
     try {
-      const cfg = dbConfig;
-      const params = new URLSearchParams({ host:cfg.host, port:cfg.port||5432, database:cfg.database, user:cfg.user, password:cfg.password });
-      const r = await fetch(`${PROXY}/api/gastos/categorias?${params}`);
+      const r = await fetch(`${PROXY}/api/gastos/categorias?${dbQs(dbConfig)}`);
       const d = await r.json();
       if (d.ok) setGastoCats(d.rows);
     } catch { /* silent */ }
   }, [dbConfig]);
 
-  useEffect(() => { if (tab === "gastocat") loadGastoCats(); }, [tab, dbConfig?.host]);
+  const loadGastoConfig = useCallback(async () => {
+    if (!dbConfig?.host || !dbConfig?.password) return;
+    try {
+      const r = await fetch(`${PROXY}/api/gastos/config?${dbQs(dbConfig)}`);
+      const d = await r.json();
+      if (d.ok) setGastoConfig(d.rows);
+    } catch { /* silent */ }
+  }, [dbConfig]);
+
+  useEffect(() => {
+    if (tab === "gastocat") { loadGastoCats(); loadGastoConfig(); }
+  }, [tab, dbConfig?.host]);
+
+  const addGastoConfig = async (tipo) => {
+    const nombre = newConfigVal[tipo]?.trim();
+    if (!nombre) return;
+    if (!dbConfig?.host || !dbConfig?.password) { toast.error("BD", "Configurá PostgreSQL primero"); return; }
+    setSavingCfg(tipo);
+    try {
+      const r = await fetch(`${PROXY}/api/gastos/config`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ config: dbConfig, tipo, nombre })
+      });
+      const d = await r.json();
+      if (d.ok) { setNewConfigVal(p => ({...p, [tipo]:""})); loadGastoConfig(); toast.success("Config", "Agregado"); }
+      else toast.error("BD", d.error);
+    } catch(e) { toast.error("BD", e.message); }
+    setSavingCfg("");
+  };
+
+  const deleteGastoConfig = async (id) => {
+    try {
+      const r = await fetch(`${PROXY}/api/gastos/config/${id}`, {
+        method:"DELETE", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ config: dbConfig })
+      });
+      const d = await r.json();
+      if (d.ok) { loadGastoConfig(); toast.success("Config", "Eliminado"); }
+      else toast.error("BD", d.error);
+    } catch(e) { toast.error("BD", e.message); }
+  };
 
   const addGastoCat = async () => {
     if (!newCatNombre.trim()) return;
@@ -267,50 +312,64 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
         </div>
       )}
 
-      {/* CATEGORÍAS GASTOS */}
+      {/* CATEGORÍAS Y CONFIG GASTOS */}
       {tab === "gastocat" && (
-        <div>
-          <div className="al ai" style={{ fontSize:10, marginBottom:12 }}>
-            Categorías del módulo de gastos. Se almacenan en PostgreSQL y se usan en la tab 💸 Gastos.
-          </div>
-
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(280px,1fr))", gap:10 }}>
           {(!dbConfig?.host || !dbConfig?.password) && (
-            <p style={{ color:"#f97316", fontSize:12 }}>⚠️ Configurá PostgreSQL en la tab Base de Datos para gestionar categorías.</p>
+            <p style={{ color:"#f97316", fontSize:12, gridColumn:"1/-1" }}>⚠️ Configurá PostgreSQL en Base de Datos para usar esta sección.</p>
           )}
 
+          {/* ── Categorías ── */}
           <div className="card">
-            <div className="ct">Agregar categoría</div>
-            <div style={{ display:"flex", gap:8, alignItems:"flex-end", flexWrap:"wrap" }}>
-              <label className="fl">
-                <span className="lbl">Icono (emoji)</span>
-                <input className="inp" style={{ width:60 }} value={newCatIcono} onChange={e=>setNewCatI(e.target.value)} maxLength={4}/>
-              </label>
-              <label className="fl" style={{ flex:1, minWidth:150 }}>
-                <span className="lbl">Nombre</span>
-                <input className="inp" placeholder="Nombre de categoría" value={newCatNombre} onChange={e=>setNewCatN(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&addGastoCat()}/>
-              </label>
-              <button className="btn bp bsm" onClick={addGastoCat} disabled={savingCat||!newCatNombre.trim()}>
-                {savingCat?"...":"+ Agregar"}
-              </button>
+            <div className="ct">🏷 Categorías</div>
+            <div style={{ display:"flex", gap:6, marginBottom:8 }}>
+              <input className="inp" style={{ width:44 }} value={newCatIcono} onChange={e=>setNewCatI(e.target.value)} maxLength={4} placeholder="📦"/>
+              <input className="inp" style={{ flex:1 }} placeholder="Nueva categoría" value={newCatNombre}
+                onChange={e=>setNewCatN(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addGastoCat()}/>
+              <button className="btn bp bsm" onClick={addGastoCat} disabled={savingCat||!newCatNombre.trim()}>+</button>
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+              {gastoCats.map(c => (
+                <div key={c.id} style={{ display:"flex", alignItems:"center", gap:6, background:"#1e293b", borderRadius:5, padding:"4px 8px" }}>
+                  <span>{c.icono}</span>
+                  <span style={{ flex:1, fontSize:12 }}>{c.nombre}</span>
+                  <button className="btn br bsm" style={{ padding:"1px 6px" }} onClick={() => deleteGastoCat(c.id, c.nombre)}>✕</button>
+                </div>
+              ))}
+              {gastoCats.length === 0 && <span style={{ color:"#64748b", fontSize:11 }}>Sin categorías aún</span>}
             </div>
           </div>
 
-          <div className="card" style={{ marginTop:10 }}>
-            <div className="ct">Categorías actuales</div>
-            {gastoCats.length === 0 && (
-              <p style={{ color:"#64748b", fontSize:12 }}>Sin categorías. Crea la primera o inicializa el schema desde 💸 Gastos.</p>
-            )}
-            <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-              {gastoCats.map(c => (
-                <div key={c.id} style={{ display:"flex", alignItems:"center", gap:8, background:"#1e293b", borderRadius:6, padding:"6px 10px" }}>
-                  <span style={{ fontSize:18 }}>{c.icono}</span>
-                  <span style={{ flex:1, fontSize:13 }}>{c.nombre}</span>
-                  <button className="btn br bsm" style={{ padding:"2px 8px" }} onClick={() => deleteGastoCat(c.id, c.nombre)}>✕</button>
+          {/* ── Helper reutilizable para las 3 listas config ── */}
+          {[
+            { tipo:"tipo_movimiento", label:"🔀 Tipos de movimiento", placeholder:"Gasto / Ingreso / ..." },
+            { tipo:"entidad",         label:"🏦 Entidades (bancos)", placeholder:"Banco, wallet..." },
+            { tipo:"producto",        label:"💳 Productos (tarjetas)", placeholder:"Tarjeta, cuenta..." },
+          ].map(({ tipo, label, placeholder }) => {
+            const items = gastoConfig.filter(x => x.tipo === tipo);
+            return (
+              <div className="card" key={tipo}>
+                <div className="ct">{label}</div>
+                <div style={{ display:"flex", gap:6, marginBottom:8 }}>
+                  <input className="inp" style={{ flex:1 }} placeholder={placeholder}
+                    value={newConfigVal[tipo] || ""}
+                    onChange={e => setNewConfigVal(p => ({...p, [tipo]:e.target.value}))}
+                    onKeyDown={e => e.key==="Enter" && addGastoConfig(tipo)}/>
+                  <button className="btn bp bsm" onClick={() => addGastoConfig(tipo)}
+                    disabled={savingCfg===tipo || !newConfigVal[tipo]?.trim()}>+</button>
                 </div>
-              ))}
-            </div>
-          </div>
+                <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                  {items.map(c => (
+                    <div key={c.id} style={{ display:"flex", alignItems:"center", gap:6, background:"#1e293b", borderRadius:5, padding:"4px 8px" }}>
+                      <span style={{ flex:1, fontSize:12 }}>{c.nombre}</span>
+                      <button className="btn br bsm" style={{ padding:"1px 6px" }} onClick={() => deleteGastoConfig(c.id)}>✕</button>
+                    </div>
+                  ))}
+                  {items.length === 0 && <span style={{ color:"#64748b", fontSize:11 }}>Sin opciones aún</span>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 

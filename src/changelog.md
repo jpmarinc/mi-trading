@@ -4,6 +4,30 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-01 — Sesión 12 (iteración 2)
+
+### Mejoras formulario gastos (feedback)
+
+**proxy.cjs**
+- Nuevo tabla `gasto_config` en schema (idempotente): almacena tipos de movimiento, entidades y productos configurables.
+- Defaults insertados: `tipo_movimiento` (Gasto, Ingreso, No computable), `entidad` (Itaú, Scotiabank, Tenpo), `producto` (Tarjeta Mastercard Tenpo, Tarjeta BCI Black, Efectivo).
+- Nuevos endpoints: `GET /api/gastos/config`, `POST /api/gastos/config`, `DELETE /api/gastos/config/:id`.
+- Resumen y total_real: filtro cambiado de `!= 'Pago tarjeta'` a `= 'Gasto'` para alinear con nueva semántica.
+
+**GastosTab.jsx**
+- `tipo_movimiento`: dropdown dinámico desde BD (no más array estático).
+- `entidad`: select desde BD (no más input libre).
+- `nombre_producto`: select desde BD; eliminado campo `tipo_producto` redundante.
+- Rate USD/CLP: mostrado como campo editable con label "(auto)". Al modificar rate, USD equiv se recalcula en tiempo real junto con cambio de importe o moneda.
+- Carga de config (`gasto_config`) en el `useEffect` de inicio.
+
+**MaintainersTab.jsx — subtab "💸 Categ. Gastos" expandido**
+- Layout en grilla 4 cards: Categorías, Tipos de movimiento, Entidades, Productos.
+- Cada card tiene add+delete directo a BD.
+- Reutiliza lógica genérica `addGastoConfig` / `deleteGastoConfig` con el campo `tipo`.
+
+---
+
 ## 2026-03-01 — Sesión 12
 
 ### Fix: Reconciliación Binance — side invertido + commission asset
