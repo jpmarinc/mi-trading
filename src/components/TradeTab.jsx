@@ -177,16 +177,18 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
   // §4 — Reconciliar Binance state
   const [bnRecAccount, setBnRecAccount]     = useState("");
   const [bnRecSymbol, setBnRecSymbol]       = useState("");
-  const [bnRecStartDate, setBnRecStartDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() - 30);
-    return d.toISOString().split("T")[0];
-  });
-  const [bnRecEndDate, setBnRecEndDate]   = useState(new Date().toISOString().split("T")[0]);
-  const [bnRecLoading, setBnRecLoading]   = useState(false);
-  const [bnRecTrades, setBnRecTrades]     = useState([]);
-  const [bnRecSelected, setBnRecSelected] = useState(new Set());
+  const [bnRecLoading, setBnRecLoading]     = useState(false);
+  const [bnRecTrades, setBnRecTrades]       = useState([]);
+  const [bnRecSelected, setBnRecSelected]   = useState(new Set());
   const [bnRecImporting, setBnRecImporting] = useState(false);
-  const [bnFixFeesLoading, setBnFixFeesLoading] = useState(false);
+
+  // Auto-seleccionar la primera cuenta Binance con API configurada
+  useEffect(() => {
+    if (!bnRecAccount) {
+      const first = accounts.find(a => a.type === "binance" && a.apiKey);
+      if (first) setBnRecAccount(first.id);
+    }
+  }, [accounts]);
 
   const loadDbTrades = async () => {
     if (!dbConfig?.host || !dbConfig?.database) {
@@ -506,24 +508,33 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
   };
 
   // §4 — Reconciliación Binance
+  // Normaliza símbolo: "BTC" → "BTCUSDT", "ETH" → "ETHUSDT", etc.
+  const normalizeSymbol = (raw) => {
+    const s = raw.trim().toUpperCase();
+    const QUOTES = ["USDT","BUSD","USDC","BTC","ETH","BNB"];
+    if (QUOTES.some(q => s.endsWith(q))) return s;
+    return s + "USDT";
+  };
+
   const fetchBnTradeHistory = async () => {
     const recAcc = accounts.find(a => a.id === bnRecAccount);
     if (!recAcc?.apiKey || !recAcc?.apiSecret) { toast.error("Reconciliar", "Elegí una cuenta Binance con API configurada"); return; }
-    if (!bnRecSymbol.trim()) { toast.error("Reconciliar", "Binance requiere un símbolo (ej: BTCUSDT, ETHUSDT)"); return; }
+    if (!bnRecSymbol.trim()) { toast.error("Reconciliar", "Ingresá un símbolo (ej: BTC, ETHUSDT)"); return; }
+    const symbol = normalizeSymbol(bnRecSymbol);
+    // Dump completo: desde lanzamiento de Binance Futures hasta ahora
+    const startTs = new Date("2019-09-01").getTime();
+    const endTs   = Date.now();
     setBnRecLoading(true);
     setBnRecTrades([]);
     setBnRecSelected(new Set());
     try {
-      const startTs = new Date(bnRecStartDate).getTime();
-      const endTs   = new Date(bnRecEndDate + "T23:59:59").getTime();
       const r = await fetch(`${PROXY}/api/binance/futures/tradeHistory`, {
         method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({
           apiKey: recAcc.apiKey, apiSecret: recAcc.apiSecret,
-          symbol: bnRecSymbol.trim().toUpperCase(),
-          startTime: startTs, endTime: endTs
+          symbol, startTime: startTs, endTime: endTs
         }),
-        signal: AbortSignal.timeout(15000)
+        signal: AbortSignal.timeout(120000)
       });
       const d = await r.json();
       if (!d.ok) { toast.error("Binance", d.msg); setBnRecLoading(false); return; }
@@ -560,32 +571,6 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
       } else toast.error("BD", d.error);
     } catch(e) { toast.error("BD", e.message); }
     setBnRecImporting(false);
-  };
-
-  const fixBnFees = async () => {
-    const recAcc = accounts.find(a => a.id === bnRecAccount);
-    if (!recAcc?.apiKey || !recAcc?.apiSecret) { toast.error("Fix Fees", "Elegí una cuenta Binance con API configurada"); return; }
-    if (!bnRecSymbol.trim()) { toast.error("Fix Fees", "Ingresá el símbolo (ej: BTCUSDT)"); return; }
-    if (!dbConfig?.host) { toast.error("BD", "Configurá PostgreSQL en Maintainers"); return; }
-    setBnFixFeesLoading(true);
-    try {
-      const startTs = new Date(bnRecStartDate).getTime();
-      const endTs   = new Date(bnRecEndDate + "T23:59:59").getTime();
-      const r = await fetch(`${PROXY}/api/db/fix-bn-fees`, {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({
-          config: dbConfig,
-          apiKey: recAcc.apiKey, apiSecret: recAcc.apiSecret,
-          symbol: bnRecSymbol.trim().toUpperCase(),
-          startTime: startTs, endTime: endTs
-        }),
-        signal: AbortSignal.timeout(30000)
-      });
-      const d = await r.json();
-      if (d.ok) toast.success(`Fees corregidas ✅`, `${d.updated} trades actualizados en BD (fees descontadas)`);
-      else toast.error("Fix Fees", d.msg || d.error);
-    } catch(e) { toast.error("Fix Fees", e.message); }
-    setBnFixFeesLoading(false);
   };
 
   const toggleRecSel = (id) => {
@@ -879,12 +864,11 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
         <div className="card">
           <div className="ct">🔄 Importar Historial de Trades desde Binance</div>
           <div className="al ai" style={{ fontSize:10, marginBottom:8 }}>
-            <strong>¿Para qué sirve?</strong> Trae los trades que ejecutaste en Binance Futures (ya cerrados) y los guarda en tu BD PostgreSQL.<br/>
-            Útil para completar el historial si ya operabas antes de usar este dashboard.<br/>
-            La deduplicación es automática por Order ID — podés correrlo múltiples veces sin duplicar.
+            <strong>¿Para qué sirve?</strong> Trae <strong>todos</strong> los trades de Binance Futures (desde el inicio de la cuenta) y los guarda en tu BD PostgreSQL.<br/>
+            Ingresá solo el par base (ej: <code>BTC</code>) y se buscará <code>BTCUSDT</code> automáticamente. La deduplicación es por Order ID — podés correrlo varias veces sin duplicar.
           </div>
-          <div className="g3">
-            <div className="fi">
+          <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+            <div className="fi" style={{ flex:1 }}>
               <label>Cuenta Binance</label>
               <select value={bnRecAccount} onChange={e => setBnRecAccount(e.target.value)}>
                 <option value="">— Elegir cuenta —</option>
@@ -893,30 +877,17 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
                 ))}
               </select>
             </div>
-            <div className="fi">
-              <label>Símbolo <span style={{ color:"#ef4444", fontSize:9 }}>(obligatorio — ej: BTCUSDT)</span></label>
-              <input placeholder="BTCUSDT, ETHUSDT..." value={bnRecSymbol}
+            <div className="fi" style={{ flex:1 }}>
+              <label>Símbolo <span style={{ color:"#8899aa", fontSize:9 }}>(ej: BTC → BTCUSDT automático)</span></label>
+              <input placeholder="BTC, ETH, LTC..." value={bnRecSymbol}
                 onChange={e => setBnRecSymbol(e.target.value.toUpperCase())}/>
             </div>
-            <div className="fi">
-              <label>Rango de fechas</label>
-              <div style={{ display:"flex", gap:4 }}>
-                <input type="date" value={bnRecStartDate} onChange={e => setBnRecStartDate(e.target.value)} style={{ flex:1 }}/>
-                <input type="date" value={bnRecEndDate} onChange={e => setBnRecEndDate(e.target.value)} style={{ flex:1 }}/>
-              </div>
-            </div>
           </div>
-          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-            <button className="btn bp" style={{ flex:1 }}
+          <div style={{ marginBottom:10 }}>
+            <button className="btn bp" style={{ width:"100%" }}
               onClick={fetchBnTradeHistory}
               disabled={bnRecLoading || !bnRecAccount || !bnRecSymbol.trim()}>
-              {bnRecLoading ? "⟳ Consultando..." : "🔍 Consultar historial"}
-            </button>
-            <button className="btn by" style={{ flex:1 }}
-              onClick={fixBnFees}
-              disabled={bnFixFeesLoading || !bnRecAccount || !bnRecSymbol.trim()}
-              title="Corrige el PnL de trades ya importados descontando las fees (commission) de Binance">
-              {bnFixFeesLoading ? "⟳ Corrigiendo..." : "🔧 Fix Fees en BD"}
+              {bnRecLoading ? "⟳ Consultando historial completo..." : "🔍 Consultar historial completo"}
             </button>
           </div>
 

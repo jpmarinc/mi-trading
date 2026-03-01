@@ -4,6 +4,22 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-01 — Sesión 12 (iteración 5)
+
+### UX Reconciliación Binance — dump completo + auto-USDT + auto-cuenta
+
+**TradeTab.jsx**
+- Eliminados campos de fecha: ahora siempre se consulta desde 2019-09-01 hasta hoy (dump completo de toda la cuenta).
+- `normalizeSymbol()`: si el símbolo ingresado no termina en USDT/BUSD/USDC/BTC/ETH/BNB, se agrega "USDT" automáticamente. Escribir "BTC" consulta "BTCUSDT".
+- Auto-selección de cuenta: `useEffect` selecciona automáticamente la primera cuenta Binance con API configurada al cargar el tab.
+- Eliminado botón "Fix Fees en BD" y función `fixBnFees` (ya no es necesario con el nuevo motor de reconciliación).
+- Timeout de fetch aumentado a 120s para dumps completos con muchas ventanas.
+
+**proxy.cjs**
+- Eliminado endpoint `POST /api/db/fix-bn-fees` (obsoleto).
+
+---
+
 ## 2026-03-01 — Sesión 12 (iteración 4)
 
 ### Fix: Reconciliación — detección isClose por dirección (no por realizedPnl)
