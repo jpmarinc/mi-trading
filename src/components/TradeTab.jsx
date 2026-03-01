@@ -546,13 +546,17 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
             order_type:  "Market",
             source:      "S/E",
             outcome:     null,
+            isClosing:   false, // true si algún fill tiene realizedPnl != 0
           };
         }
+        // isClosing: detectar si es orden de cierre por realizedPnl individual del fill
+        // (no usar el total acumulado porque al restar commission puede ser != 0 en aperturas)
+        if (Math.abs(parseFloat(t.realizedPnl || 0)) > 0) grouped[oid].isClosing = true;
         grouped[oid].pnl += parseFloat(t.realizedPnl || 0) - parseFloat(t.commission || 0);
         grouped[oid].qty += parseFloat(t.qty);
       }
       const trades = Object.values(grouped)
-        .filter(t => Math.abs(t.pnl) > 0.001)   // ignorar aperturas (PnL = 0)
+        .filter(t => t.isClosing)   // solo órdenes de cierre (apertura: realizedPnl=0 en fills)
         .map(t => ({
           ...t, pnl: parseFloat(t.pnl.toFixed(2)),
           outcome: t.pnl > 0 ? "WIN" : t.pnl < 0 ? "LOSS" : "BE",

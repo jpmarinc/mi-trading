@@ -142,11 +142,8 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
       {tab === "db" && (
         <div>
           <div className="al ai" style={{ fontSize:10, marginBottom:10 }}>
-            <strong>Setup PostgreSQL:</strong><br/>
-            1. <code style={{ background:"#111d2c", padding:"1px 5px", borderRadius:3 }}>brew install postgresql@16 && brew services start postgresql@16</code><br/>
-            2. <code style={{ background:"#111d2c", padding:"1px 5px", borderRadius:3 }}>psql postgres -f db-setup.sql</code><br/>
-            3. <code style={{ background:"#111d2c", padding:"1px 5px", borderRadius:3 }}>npm install pg</code><br/>
-            4. Configurar conexión abajo
+            <strong>Local:</strong> <code style={{ background:"#111d2c", padding:"1px 5px", borderRadius:3 }}>brew install postgresql@16 && brew services start postgresql@16</code><br/>
+            <strong>Cloud (Supabase):</strong> crear proyecto en supabase.com → Project Settings → Database → Connection string
           </div>
           <div className="card">
             <div className="ct">Conexión PostgreSQL</div>
@@ -157,6 +154,12 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
               <div className="fi"><label>Usuario</label><input placeholder="postgres" value={dbConfig.user||""} onChange={e => setDbConfig(p => ({ ...p, user:e.target.value }))}/></div>
             </div>
             <div className="fi"><label>Contraseña</label><input type="password" placeholder="(vacío si no tiene)" value={dbConfig.password||""} onChange={e => setDbConfig(p => ({ ...p, password:e.target.value }))}/></div>
+            <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
+              <input type="checkbox" id="dbSsl" checked={!!dbConfig.ssl} onChange={e => setDbConfig(p => ({ ...p, ssl: e.target.checked }))} style={{ width:14, height:14, cursor:"pointer" }}/>
+              <label htmlFor="dbSsl" style={{ fontSize:10, color:"#94a3b8", cursor:"pointer", margin:0 }}>
+                SSL / Base de datos cloud (Supabase, Neon, Railway, etc.)
+              </label>
+            </div>
             <button className="btn bp" onClick={async () => {
               try {
                 const r = await fetch(`${PROXY}/api/db/query`, {

@@ -669,7 +669,7 @@ let pgPool    = null;
 let pgCfgKey  = null;
 
 function sanitizePgCfg(cfg) {
-  return {
+  const base = {
     host:     cfg.host     || "localhost",
     port:     parseInt(cfg.port, 10) || 5432,
     database: cfg.database || "trading_fw",
@@ -677,6 +677,13 @@ function sanitizePgCfg(cfg) {
     // empty string → undefined: evita error SASL "client password must be a string"
     password: cfg.password ? String(cfg.password) : undefined,
   };
+  // SSL automático para Supabase y otras BDs cloud (o si el usuario activa ssl:true)
+  const isCloud = cfg.ssl || (cfg.host && (
+    cfg.host.includes("supabase") || cfg.host.includes("neon") ||
+    cfg.host.includes("railway")  || cfg.host.includes("render")
+  ));
+  if (isCloud) base.ssl = { rejectUnauthorized: false };
+  return base;
 }
 
 function getPool(cfg) {
