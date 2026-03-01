@@ -5,51 +5,6 @@ de Discord, Telegram bidireccional y Oracle Free Tier.
 
 ---
 
-## 1. GitHub — Subir el proyecto
-
-### 1.1 Crear repositorio privado
-
-1. Ir a https://github.com/new
-2. Nombre sugerido: `mi-trading` (privado)
-3. No inicializar con README (ya tenemos el código)
-
-### 1.2 .gitignore (CRÍTICO — antes de hacer el primer push)
-
-Crear `/Users/juanpablomarinconcha/Desktop/mi-trading/.gitignore` con:
-
-```
-node_modules/
-dist/
-.env
-.env.local
-*.env
-src/phaseII.md       # este archivo tiene instrucciones sensibles
-```
-
-> **NUNCA commitear credenciales.** Las keys de Binance, token de TG,
-> password de BD van SOLO en `.env` o en la UI (localStorage). Jamás en código.
-
-### 1.3 Comandos para primer push
-
-```bash
-cd /Users/juanpablomarinconcha/Desktop/mi-trading
-git init
-git add .
-git commit -m "initial commit - trading dashboard"
-git branch -M main
-git remote add origin git@github.com:TU_USUARIO/mi-trading.git
-git push -u origin main
-```
-
-### 1.4 SSH key para GitHub (si no tienes)
-
-```bash
-ssh-keygen -t ed25519 -C "tu@email.com"
-cat ~/.ssh/id_ed25519.pub   # copiar y pegar en GitHub → Settings → SSH Keys
-```
-
----
-
 ## 2. Oracle Free Tier — VM Siempre Encendida
 
 ### 2.1 Crear cuenta

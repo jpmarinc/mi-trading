@@ -6,12 +6,23 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
   const [newCall, setNewCall] = useState("");
   const [tab, setTab] = useState("r");
 
+  // SL/TP test state
+  const [sltpAcct,    setSltpAcct]    = useState("");
+  const [sltpSymbol,  setSltpSymbol]  = useState("BTCUSDT");
+  const [sltpSide,    setSltpSide]    = useState("SELL");
+  const [sltpSl,      setSltpSl]      = useState("");
+  const [sltpTp,      setSltpTp]      = useState("");
+  const [sltpQty,     setSltpQty]     = useState("0.001");
+  const [sltpLoading, setSltpLoading] = useState(false);
+  const [sltpResults, setSltpResults] = useState(null);
+
   const subTabs = [
     { id:"r",        label:"📊 R Values" },
     { id:"leverage", label:"⚙️ Leverage" },
     { id:"call",     label:"📋 Call Options" },
     { id:"db",       label:"🐘 Base de Datos" },
     { id:"tg",       label:"✈️ Telegram" },
+    { id:"sltp",     label:"🧪 Test SL/TP" },
     { id:"docs",     label:"📖 Code Map" },
   ];
 
@@ -201,6 +212,103 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
               } catch(e) { toast.error("Telegram", "Proxy offline"); }
             }}>📤 Probar conexión</button>
           </div>
+        </div>
+      )}
+
+      {/* SL/TP TEST */}
+      {tab === "sltp" && (
+        <div>
+          <div className="al ai" style={{ fontSize:10, marginBottom:12 }}>
+            <strong>¿Para qué sirve?</strong> Prueba 5 estrategias diferentes de SL/TP contra la API de Binance Futures.<br/>
+            Las órdenes exitosas se <strong>cancelan automáticamente</strong> — no afectan tu cuenta.<br/>
+            El objetivo es identificar cuál combinación acepta tu cuenta para documentarla y usarla en producción.
+          </div>
+          <div className="card">
+            <div className="ct">Configuración del test</div>
+            <div className="g3">
+              <div className="fi">
+                <label>Cuenta Binance</label>
+                <select value={sltpAcct} onChange={e => setSltpAcct(e.target.value)}>
+                  <option value="">— Elegir —</option>
+                  {accounts.filter(a => a.type === "binance" && a.apiKey).map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="fi">
+                <label>Símbolo</label>
+                <input value={sltpSymbol} onChange={e => setSltpSymbol(e.target.value.toUpperCase())} placeholder="BTCUSDT"/>
+              </div>
+              <div className="fi">
+                <label>Lado SL/TP <span style={{ color:"#4a6280", fontSize:9 }}>(SELL si eres Long, BUY si Short)</span></label>
+                <select value={sltpSide} onChange={e => setSltpSide(e.target.value)}>
+                  <option value="SELL">SELL (Long → cierra)</option>
+                  <option value="BUY">BUY (Short → cierra)</option>
+                </select>
+              </div>
+              <div className="fi">
+                <label>SL precio <span style={{ color:"#4a6280", fontSize:9 }}>(deja vacío para no probar SL)</span></label>
+                <input type="number" value={sltpSl} onChange={e => setSltpSl(e.target.value)} placeholder="ej: 80000"/>
+              </div>
+              <div className="fi">
+                <label>TP precio <span style={{ color:"#4a6280", fontSize:9 }}>(deja vacío para no probar TP)</span></label>
+                <input type="number" value={sltpTp} onChange={e => setSltpTp(e.target.value)} placeholder="ej: 100000"/>
+              </div>
+              <div className="fi">
+                <label>Qty <span style={{ color:"#4a6280", fontSize:9 }}>(mínimo del par, ej 0.001 BTC)</span></label>
+                <input type="number" value={sltpQty} onChange={e => setSltpQty(e.target.value)} step="0.001"/>
+              </div>
+            </div>
+            <button className="btn bp" style={{ width:"100%", marginTop:10 }}
+              disabled={sltpLoading || !sltpAcct || !sltpSymbol || (!sltpSl && !sltpTp)}
+              onClick={async () => {
+                const acc = accounts.find(a => a.id === sltpAcct);
+                if (!acc?.apiKey) { toast.error("Test SL/TP", "Cuenta sin API key"); return; }
+                setSltpLoading(true); setSltpResults(null);
+                try {
+                  const r = await fetch(`${PROXY}/api/binance/futures/try-sltp`, {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body: JSON.stringify({
+                      apiKey: acc.apiKey, apiSecret: acc.apiSecret,
+                      symbol: sltpSymbol, slSide: sltpSide,
+                      sl: sltpSl || null, tp: sltpTp || null, qty: sltpQty
+                    }),
+                    signal: AbortSignal.timeout(30000)
+                  });
+                  const d = await r.json();
+                  setSltpResults(d);
+                  if (d.worked?.length) toast.success("Estrategias encontradas ✅", d.worked.join(", "));
+                  else toast.error("Ninguna estrategia funcionó", "Ver resultados detallados abajo");
+                } catch(e) { toast.error("Test SL/TP", e.message); }
+                setSltpLoading(false);
+              }}>
+              {sltpLoading ? "⟳ Probando 10 estrategias..." : "🧪 Probar todas las estrategias"}
+            </button>
+          </div>
+
+          {sltpResults && (
+            <div className="card" style={{ marginTop:10 }}>
+              <div className="ct">Resultados del test</div>
+              {sltpResults.worked?.length > 0 && (
+                <div className="al aok" style={{ fontSize:10, marginBottom:8 }}>
+                  ✅ Estrategias que funcionaron: <strong>{sltpResults.worked.join(" | ")}</strong><br/>
+                  Las órdenes exitosas fueron canceladas automáticamente.
+                </div>
+              )}
+              <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+                {sltpResults.results?.map((r, i) => (
+                  <div key={i} style={{ display:"flex", alignItems:"flex-start", gap:8, padding:"5px 8px", borderRadius:5,
+                    background: r.ok ? "#0d2016" : "#1a0a0a", border:`1px solid ${r.ok ? "#22c55e33" : "#ef444433"}` }}>
+                    <span style={{ fontSize:12, lineHeight:1.2 }}>{r.ok ? "✅" : "❌"}</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontSize:10, fontWeight:600, color: r.ok ? "#22c55e" : "#ef4444" }}>{r.label}</div>
+                      {!r.ok && <div style={{ fontSize:9, color:"#64748b", marginTop:2 }}>{r.msg}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 

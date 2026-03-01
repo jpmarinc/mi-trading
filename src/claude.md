@@ -12,11 +12,27 @@ Los resúmenes de cambios van en `changelog.md`, no acá.
    **Credenciales:** La clave de la BD está en `comentarios.md` solo para uso en sesión.
    **NUNCA guardar credenciales en ningún archivo del proyecto (ni aquí, ni código, ni changelog).**
 2. **Al finalizar:** Agregar entrada en `changelog.md` + marcar ✅ 
-   en `comentarios.md` + enviar resumen en el chat.
-3. **Nunca marcar tarea completa** sin validar: `npm run build` pasa, 
+   en `comentarios.md` + **ejecutar deploy completo a GitHub** + enviar resumen en el chat.
+3. **Deploy obligatorio a GitHub (nunca saltar):**
+   - `git status` (para verificar)
+   - `git add .`
+   - `git commit -m "Sesión $(date +%Y-%m-%d) — [resumen corto del changelog]"`  
+     (ejemplo: "Sesión 2026-03-01 — fix fees + PerformanceTab BD")
+   - `git push origin main`
+   - Si hay cambios en archivos nuevos o .env: `git add -f .env.example` (nunca subir .env real)
+4. **Nunca marcar tarea completa** sin validar: `npm run build` pasa, 
    cálculos financieros correctos, sin funcionalidad rota.
-4. **Ante cualquier bug nuevo:** documentar causa raíz en 
+5. **Ante cualquier bug nuevo:** documentar causa raíz en 
    "Patrones de error" de este archivo antes de cerrar la sesión.
+
+## Reglas de GitHub y Deploy (obligatorio)
+
+- El repo remoto es: https://github.com/jpmarinc/mi-trading (rama main)
+- Siempre trabajar en rama `main` (nunca crear otras ramas por ahora).
+- **Nunca** subir credenciales: apiKey, apiSecret, password BD, token Telegram, etc.
+- Al final de **cada sesión** (incluso si solo fue una corrección pequeña) hacer commit + push.
+- Si Claude detecta que no se hizo push al final, debe recordármelo antes de cerrar la sesión.
+- Para verificar: después del push, mostrar el link del commit en el resumen.
 
 ---
 

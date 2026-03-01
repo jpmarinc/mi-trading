@@ -209,6 +209,91 @@ app.post("/api/binance/futures/order", async (req, res) => {
   } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
 });
 
+// ── BINANCE FUTURES: probar TODAS las estrategias SL/TP ───────────────────────
+// POST /api/binance/futures/try-sltp
+// { apiKey, apiSecret, symbol, slSide, sl, tp, qty }
+// Prueba 5 estrategias por SL y por TP. Devuelve qué funcionó.
+// NUNCA para producción — solo para diagnosticar cuál strategy acepta la cuenta.
+app.post("/api/binance/futures/try-sltp", async (req, res) => {
+  const { apiKey, apiSecret, symbol, slSide, sl, tp, qty } = req.body;
+  if (!apiKey || !apiSecret || !symbol || !slSide)
+    return res.status(400).json({ ok: false, msg: "Faltan: apiKey, apiSecret, symbol, slSide" });
+
+  const filters   = await getBnFuturesFilters(symbol);
+  const roundQty  = (qty && filters) ? roundToStep(parseFloat(qty), filters.stepSize) : parseFloat(qty || 0);
+  const roundSl   = (sl  && filters) ? roundToStep(parseFloat(sl),  filters.tickSize) : parseFloat(sl || 0);
+  const roundTp   = (tp  && filters) ? roundToStep(parseFloat(tp),  filters.tickSize) : parseFloat(tp || 0);
+
+  // Helper: construir y enviar una orden a Binance Futures (sin errores fatales)
+  const tryOrder = async (params) => {
+    try {
+      const ts    = Date.now();
+      const parts = Object.entries({ ...params, timestamp: ts }).map(([k, v]) => `${k}=${v}`);
+      const qs    = parts.join("&");
+      const sig   = signBinance(qs, apiSecret);
+      const r = await pf("https://fapi.binance.com/fapi/v1/order", {
+        method: "POST",
+        headers: { "X-MBX-APIKEY": apiKey, "Content-Type": "application/x-www-form-urlencoded" },
+        body: `${qs}&signature=${sig}`,
+      });
+      const d = await r.json();
+      if (!r.ok || (d.code && d.code < 0)) return { ok: false, msg: `Binance ${d.code}: ${d.msg}`, orderId: null };
+      return { ok: true, msg: "OK", orderId: d.orderId };
+    } catch(e) { return { ok: false, msg: e.message, orderId: null }; }
+  };
+
+  // Cancelar una orden de test si fue creada (limpieza automática)
+  const cancelOrder = async (orderId) => {
+    if (!orderId) return;
+    try {
+      const ts   = Date.now();
+      const qs   = `symbol=${symbol}&orderId=${orderId}&timestamp=${ts}`;
+      const sig  = signBinance(qs, apiSecret);
+      await pf(`https://fapi.binance.com/fapi/v1/order?${qs}&signature=${sig}`, {
+        method: "DELETE", headers: { "X-MBX-APIKEY": apiKey }
+      });
+    } catch { /* ignorar error al cancelar */ }
+  };
+
+  const results = [];
+
+  // ── SL strategies ─────────────────────────────────────────────────────────
+  if (roundSl) {
+    const slStrats = [
+      { label:"SL-A: STOP_MARKET + closePosition=TRUE + MARK_PRICE",     params:{ symbol, side:slSide, type:"STOP_MARKET", stopPrice:roundSl, closePosition:"TRUE", workingType:"MARK_PRICE" } },
+      { label:"SL-B: STOP_MARKET + closePosition=TRUE + CONTRACT_PRICE", params:{ symbol, side:slSide, type:"STOP_MARKET", stopPrice:roundSl, closePosition:"TRUE", workingType:"CONTRACT_PRICE" } },
+      { label:"SL-C: STOP_MARKET + reduceOnly + qty + MARK_PRICE",       params:{ symbol, side:slSide, type:"STOP_MARKET", stopPrice:roundSl, reduceOnly:"true", quantity:roundQty, workingType:"MARK_PRICE" } },
+      { label:"SL-D: STOP_MARKET + reduceOnly + qty + CONTRACT_PRICE",   params:{ symbol, side:slSide, type:"STOP_MARKET", stopPrice:roundSl, reduceOnly:"true", quantity:roundQty, workingType:"CONTRACT_PRICE" } },
+      { label:"SL-E: STOP (Limit) + reduceOnly + qty + price offset",    params:{ symbol, side:slSide, type:"STOP", stopPrice:roundSl, price: parseFloat((roundSl * (slSide === "SELL" ? 0.998 : 1.002)).toFixed(filters?.tickSize?.toString().split(".")[1]?.length || 2)), reduceOnly:"true", quantity:roundQty, timeInForce:"GTC" } },
+    ];
+    for (const s of slStrats) {
+      const r = await tryOrder(s.params);
+      results.push({ type:"SL", label:s.label, ...r });
+      if (r.ok) await cancelOrder(r.orderId); // limpiar orden de test
+    }
+  }
+
+  // ── TP strategies ─────────────────────────────────────────────────────────
+  if (roundTp) {
+    const tpStrats = [
+      { label:"TP-A: TAKE_PROFIT_MARKET + closePosition=TRUE + MARK_PRICE",     params:{ symbol, side:slSide, type:"TAKE_PROFIT_MARKET", stopPrice:roundTp, closePosition:"TRUE", workingType:"MARK_PRICE" } },
+      { label:"TP-B: TAKE_PROFIT_MARKET + closePosition=TRUE + CONTRACT_PRICE", params:{ symbol, side:slSide, type:"TAKE_PROFIT_MARKET", stopPrice:roundTp, closePosition:"TRUE", workingType:"CONTRACT_PRICE" } },
+      { label:"TP-C: TAKE_PROFIT_MARKET + reduceOnly + qty + MARK_PRICE",       params:{ symbol, side:slSide, type:"TAKE_PROFIT_MARKET", stopPrice:roundTp, reduceOnly:"true", quantity:roundQty, workingType:"MARK_PRICE" } },
+      { label:"TP-D: TAKE_PROFIT_MARKET + reduceOnly + qty + CONTRACT_PRICE",   params:{ symbol, side:slSide, type:"TAKE_PROFIT_MARKET", stopPrice:roundTp, reduceOnly:"true", quantity:roundQty, workingType:"CONTRACT_PRICE" } },
+      { label:"TP-E: TAKE_PROFIT (Limit) + reduceOnly + qty + price offset",    params:{ symbol, side:slSide, type:"TAKE_PROFIT", stopPrice:roundTp, price: parseFloat((roundTp * (slSide === "SELL" ? 0.998 : 1.002)).toFixed(filters?.tickSize?.toString().split(".")[1]?.length || 2)), reduceOnly:"true", quantity:roundQty, timeInForce:"GTC" } },
+    ];
+    for (const s of tpStrats) {
+      const r = await tryOrder(s.params);
+      results.push({ type:"TP", label:s.label, ...r });
+      if (r.ok) await cancelOrder(r.orderId); // limpiar orden de test
+    }
+  }
+
+  const worked  = results.filter(r => r.ok).map(r => r.label);
+  const failed  = results.filter(r => !r.ok);
+  res.json({ ok: worked.length > 0, worked, failed: failed.map(f => ({ label:f.label, msg:f.msg })), results });
+});
+
 // ── HYPERLIQUID: todos los mids ─────────────────────────────────────────────
 app.post("/api/hyperliquid/mids", async (req, res) => {
   try {
