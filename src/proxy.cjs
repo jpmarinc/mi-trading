@@ -209,6 +209,51 @@ app.post("/api/binance/futures/order", async (req, res) => {
   } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
 });
 
+// ── BINANCE FUTURES: SL/TP vía nuevo Algo Order API (desde 2025-11-06) ────────
+// POST /api/binance/futures/algoOrder
+// { apiKey, apiSecret, symbol, side, type, triggerPrice, closePosition?, quantity?, workingType? }
+// type: STOP_MARKET | TAKE_PROFIT_MARKET
+// Nota: desde nov-2025 Binance migró órdenes condicionales a fapi/v1/algoOrder.
+//       El endpoint fapi/v1/order devuelve -4120 para estas órdenes.
+app.post("/api/binance/futures/algoOrder", async (req, res) => {
+  const { apiKey, apiSecret, symbol, side, type, triggerPrice, closePosition, quantity, workingType } = req.body;
+  if (!apiKey || !apiSecret || !symbol || !side || !type || !triggerPrice)
+    return res.status(400).json({ ok: false, msg: "Faltan: symbol, side, type, triggerPrice" });
+
+  const filters        = await getBnFuturesFilters(symbol);
+  const roundTrigger   = filters ? roundToStep(parseFloat(triggerPrice), filters.tickSize) : parseFloat(triggerPrice);
+  const useClosePos    = String(closePosition).toLowerCase() === "true";
+  const roundQty       = (!useClosePos && quantity && filters) ? roundToStep(parseFloat(quantity), filters.stepSize) : parseFloat(quantity || 0);
+
+  const ts    = Date.now();
+  const parts = [
+    `algoType=CONDITIONAL`,
+    `symbol=${symbol}`,
+    `side=${side}`,
+    `type=${type}`,
+    `triggerPrice=${roundTrigger}`,
+    `workingType=${workingType || "MARK_PRICE"}`,
+    `timestamp=${ts}`,
+  ];
+  if (useClosePos) parts.push(`closePosition=true`);
+  else if (roundQty > 0) parts.push(`quantity=${roundQty}`);
+
+  const qs  = parts.join("&");
+  const sig = signBinance(qs, apiSecret);
+
+  try {
+    const r = await pf("https://fapi.binance.com/fapi/v1/algoOrder", {
+      method:  "POST",
+      headers: { "X-MBX-APIKEY": apiKey, "Content-Type": "application/x-www-form-urlencoded" },
+      body:    `${qs}&signature=${sig}`,
+    });
+    const d = await r.json();
+    if (!r.ok || (d.code && d.code < 0))
+      return res.json({ ok: false, msg: `Binance ${d.code}: ${d.msg}` });
+    res.json({ ok: true, order: d, algoId: d.algoId });
+  } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
+});
+
 // ── BINANCE FUTURES: probar TODAS las estrategias SL/TP ───────────────────────
 // POST /api/binance/futures/try-sltp
 // { apiKey, apiSecret, symbol, slSide, sl, tp, qty }

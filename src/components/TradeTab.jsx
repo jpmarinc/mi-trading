@@ -314,25 +314,52 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
     setFetchingMargin(false);
   };
 
-  // SL/TP — solo informativo. Binance Futures de esta cuenta devuelve -4120 para STOP_MARKET/TAKE_PROFIT_MARKET.
-  // Se muestran los valores para que el usuario los configure manualmente en Binance UI.
-  // Patrón #27 registrado en CLAUDE.md.
-  const placeSLTPOrders = (symbol, slTpSide, sl, tp, qty, isMarketOrder) => {
-    const lines = [];
-    if (sl) lines.push(`🛑 SL: $${sl}`);
-    if (tp) lines.push(`🎯 TP: $${tp}`);
-    const detail = lines.join("  |  ");
-    if (isMarketOrder) {
-      toast.warning(
-        `Configurá SL/TP manualmente en Binance`,
-        `${symbol} — ${detail}`
-      );
-    } else {
-      toast.info?.(
-        `SL/TP guardados — configuralos al ejecutar`,
-        `${symbol} — ${detail}`
-      );
+  // SL/TP vía Binance Algo Order API (fapi/v1/algoOrder).
+  // Desde nov-2025 Binance migró órdenes condicionales — fapi/v1/order devuelve -4120.
+  // Patrón #27 → #28 actualizado en CLAUDE.md.
+  const placeSLTPOrders = async (symbol, slTpSide, sl, tp, qty, isMarketOrder) => {
+    if (!isMarketOrder) {
+      // LIMIT pendiente: no hay posición aún, closePosition no aplica
+      const lines = [sl && `SL: $${sl}`, tp && `TP: $${tp}`].filter(Boolean).join(" | ");
+      toast.info?.(`SL/TP guardados — colocá en Binance al ejecutar`, `${symbol} — ${lines}`);
+      return;
     }
+    // MARKET: posición abierta → colocar vía algoOrder con closePosition=true
+    const results = [];
+    if (sl) {
+      try {
+        const r = await fetch(`${PROXY}/api/binance/futures/algoOrder`, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({
+            apiKey: acc.apiKey, apiSecret: acc.apiSecret,
+            symbol, side: slTpSide, type: "STOP_MARKET",
+            triggerPrice: sl, closePosition: "true", workingType: "MARK_PRICE"
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+        const d = await r.json();
+        results.push({ label:"SL", ok: d.ok, msg: d.msg });
+      } catch(e) { results.push({ label:"SL", ok: false, msg: e.message }); }
+    }
+    if (tp) {
+      try {
+        const r = await fetch(`${PROXY}/api/binance/futures/algoOrder`, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({
+            apiKey: acc.apiKey, apiSecret: acc.apiSecret,
+            symbol, side: slTpSide, type: "TAKE_PROFIT_MARKET",
+            triggerPrice: tp, closePosition: "true", workingType: "MARK_PRICE"
+          }),
+          signal: AbortSignal.timeout(10000)
+        });
+        const d = await r.json();
+        results.push({ label:"TP", ok: d.ok, msg: d.msg });
+      } catch(e) { results.push({ label:"TP", ok: false, msg: e.message }); }
+    }
+    const ok   = results.filter(r => r.ok).map(r => r.label);
+    const fail = results.filter(r => !r.ok);
+    if (ok.length)   toast.success(`${ok.join(" + ")} colocados en Binance ✅`, `${symbol} — Algo Order API`);
+    if (fail.length) fail.forEach(f => toast.error(`Error ${f.label}`, f.msg));
   };
 
   const placeBinanceOrder = async (form, margin, posId) => {
