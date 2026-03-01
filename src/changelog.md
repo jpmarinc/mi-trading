@@ -4,6 +4,39 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-01 — Sesión 11
+
+### Fixes
+
+**Trades filter — isClosing flag → TradeTab.jsx**
+- Root cause: la resta de commission en el agrupado de fills hacía que órdenes de apertura (realizedPnl=0, commission≠0) tuvieran pnl≠0 y pasaran el filtro `|pnl| > 0.001`. Resultado: app mostraba 6 trades (3 aperturas + 3 cierres) cuando Binance Position History muestra 3.
+- Fix: flag `isClosing = true` solo cuando algún fill tiene `realizedPnl != 0`. Filtro cambiado de `|pnl| > 0.001` a `t.isClosing`. Ahora solo se importan órdenes de cierre de posición (1 fila = 1 posición cerrada = coincide con Position History de Binance).
+
+**SL/TP definitivo — fapi/v1/algoOrder → TradeTab.jsx + proxy.cjs**
+- Root cause: Binance migró STOP_MARKET/TAKE_PROFIT_MARKET al Algo Order API (2025-11-06). El endpoint `fapi/v1/order` devuelve -4120 para estas órdenes en TODAS las cuentas.
+- Fix: nuevo endpoint `POST /api/binance/futures/algoOrder` usando `fapi/v1/algoOrder` con `algoType=CONDITIONAL` y `triggerPrice` (en vez de `stopPrice`). Confirmado funcionando por el usuario (ordenes visibles en UI Binance).
+- Para órdenes LIMIT pendientes: sigue mostrando toast (no se pueden poner SL/TP hasta ejecutar).
+- Patrón #27 documentado en CLAUDE.md.
+
+**SSL para BD cloud → proxy.cjs + MaintainersTab.jsx**
+- proxy.cjs: `sanitizePgCfg` detecta hosts cloud (supabase, neon, railway, render) → `ssl: { rejectUnauthorized: false }` automático. También trigger manual con `cfg.ssl = true`.
+- MaintainersTab: checkbox "SSL / Base de datos cloud" en tab DB.
+- Supabase ahora es la BD cloud recomendada (Oracle descartado por problemas de registro).
+
+**Seguridad — comentarios.md protegido**
+- Archivo añadido a `.gitignore` + `git rm --cached` para que no se suba a GitHub.
+- Las API keys que estaban en el archivo NUNCA llegaron a GitHub (no estaban staged).
+
+### Infraestructura
+
+**phaseII.md actualizado — Oracle → Supabase**
+- Reemplazado todo el setup de Oracle Free Tier por instrucciones de Supabase.
+- Incluye: crear cuenta, obtener host, configurar en Maintainers (SSL checkbox), inicializar schema.
+- Agregado: ngrok como alternativa sin VM para Telegram webhook.
+- Backlog Phase II ordenado por prioridad.
+
+---
+
 ## 2026-02-28 — Sesión 10
 
 ### Fixes (feedback #1–#6 de comentarios.md + backlog)

@@ -1,208 +1,145 @@
 # Phase II — Infraestructura y Automatización
 
 Guía de setup para migrar el proyecto a producción y activar las integraciones
-de Discord, Telegram bidireccional y Oracle Free Tier.
+de Telegram bidireccional, Discord y base de datos en la nube.
 
 ---
 
-## 2. Oracle Free Tier — VM Siempre Encendida
+## 1. Base de Datos Cloud — Supabase (FREE, recomendado)
 
-### 2.1 Crear cuenta
+Oracle Free Tier descartado por problemas de registro. **Supabase** es la alternativa:
+- PostgreSQL real (compatible 100% con el código existente)
+- Free tier: 500 MB, sin tarjeta de crédito, sin límite de tiempo
+- SSL incluido, conexión estándar `pg`
 
-- URL: https://www.oracle.com/cloud/free/
-- Requiere: tarjeta de crédito para verificación (no cobra si usas Always Free)
-- Región: elegir la más cercana (São Paulo o US East según latencia)
+### 1.1 Crear cuenta y proyecto
 
-### 2.2 Crear instancia VM (Always Free ARM)
+1. Ir a https://supabase.com → **Start for free** → cuenta GitHub/Google
+2. **New Project** → nombre (ej: `mi-trading`) → contraseña BD (guárdala)
+3. Región: **South America (São Paulo)** o US East
+4. Esperar ~2 minutos mientras crea la instancia
 
-1. Compute → Instances → Create Instance
-2. **Shape:** `VM.Standard.A1.Flex` (ARM Ampere)
-   - 4 OCPUs, 24 GB RAM — completamente gratis
-3. **OS:** Ubuntu 22.04 (Canonical)
-4. **Networking:** asignar IP pública (necesaria para webhooks de Telegram)
-5. **SSH Key:** subir tu llave pública (`~/.ssh/id_ed25519.pub`)
+### 1.2 Obtener string de conexión
 
-### 2.3 Abrir puertos en Oracle (muy importante)
+En el dashboard de Supabase:
+- **Project Settings → Database → Connection string → URI**
+- Copiar el string. Tiene este formato:
+  ```
+  postgresql://postgres:[TU_PASSWORD]@db.xxxxxxxxxxxx.supabase.co:5432/postgres
+  ```
 
-Oracle bloquea puertos por defecto en dos capas:
+### 1.3 Configurar en el dashboard (Maintainers → DB)
 
-**Capa 1 — Security List (VCN):**
-- Networking → Virtual Cloud Networks → tu VCN → Security Lists → Ingress Rules
-- Agregar reglas:
-  | Puerto | Protocolo | Uso |
-  |--------|-----------|-----|
-  | 22     | TCP       | SSH |
-  | 3001   | TCP       | Proxy Node.js |
-  | 5432   | TCP       | PostgreSQL (solo desde tu IP si accedes remotamente) |
-  | 443    | TCP       | HTTPS / Telegram webhook |
-  | 80     | TCP       | HTTP (para certbot) |
+Llenar los campos con los datos del string de conexión:
 
-**Capa 2 — iptables dentro del OS:**
-```bash
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3001 -j ACCEPT
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
-sudo netfilter-persistent save
-```
+| Campo | Valor |
+|-------|-------|
+| Host | `db.xxxxxxxxxxxx.supabase.co` |
+| Puerto | `5432` |
+| Database | `postgres` |
+| User | `postgres` |
+| Password | la contraseña que pusiste al crear el proyecto |
+| **SSL** | ✅ **activar el checkbox** |
 
-### 2.4 Setup inicial del servidor
+El proxy detecta automáticamente hosts Supabase y activa SSL. El checkbox es confirmación visual.
 
-SSH al servidor:
-```bash
-ssh ubuntu@IP_PUBLICA_ORACLE
-```
+### 1.4 Inicializar schema en Supabase
 
-Instalar dependencias:
-```bash
-# Node.js 20
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
+Una vez configurada la BD en Maintainers, ir a **Maintainers → DB → Inicializar BD** (o ejecutar manualmente el `db-setup.sql` via Supabase SQL Editor).
 
-# PostgreSQL
-sudo apt-get install -y postgresql postgresql-contrib
+También puedes usar el SQL Editor de Supabase:
+- Project → SQL Editor → New Query → pegar contenido de `db-setup.sql` → Run
 
-# PM2 (process manager — mantiene el proxy corriendo)
-sudo npm install -g pm2
+### 1.5 Verificar conexión
 
-# Git
-sudo apt-get install -y git
-
-# Nginx (reverse proxy para HTTPS)
-sudo apt-get install -y nginx
-
-# Certbot (certificado SSL gratuito)
-sudo apt-get install -y certbot python3-certbot-nginx
-```
-
-### 2.5 Clonar el proyecto en la VM
-
-```bash
-# Agregar SSH key de la VM a GitHub también
-ssh-keygen -t ed25519 -C "oracle-vm"
-cat ~/.ssh/id_ed25519.pub   # agregar en GitHub → Settings → SSH Keys
-
-# Clonar
-git clone git@github.com:TU_USUARIO/mi-trading.git
-cd mi-trading
-npm install
-```
-
-### 2.6 Variables de entorno en la VM
-
-Crear `/home/ubuntu/mi-trading/.env`:
-```
-# BD PostgreSQL
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=trading_fw
-DB_USER=tu_usuario
-DB_PASS=         # NO commitear este archivo
-
-# Telegram
-TG_TOKEN=
-TG_CHAT_ID=
-
-# Discord
-DISCORD_BOT_TOKEN=
-DISCORD_CHANNEL_ID=
-
-# Binance (opcional si se centraliza acá)
-# Preferir que cada cuenta las tenga en la UI
-```
-
-El proxy debe leer estas vars con `process.env.X || fallback_desde_request`.
-
-### 2.7 Iniciar proxy con PM2
-
-```bash
-cd /home/ubuntu/mi-trading
-pm2 start src/proxy.cjs --name "trading-proxy"
-pm2 save
-pm2 startup   # para que arranque automático tras reboot
-```
-
-### 2.8 Dominio (opcional pero recomendado para webhook TG)
-
-Si no quieres pagar dominio, puedes usar la IP directa con `https://IP` solo si
-Telegram acepta certificados autofirmados (sí los acepta con `setWebhook`).
-
-Si quieres dominio gratuito: https://duckdns.org (subdominio gratuito).
+- En Maintainers → DB → botón **Test conexión** (o hacer un sync)
+- Si falla: verificar que el checkbox SSL esté activado
+- Si sigue fallando: en Supabase → Settings → Database → "Connection pooling" → usar el puerto 6543 (pooler)
 
 ---
 
-## 3. Telegram Bot Bidireccional
+## 2. Telegram Bot — Modo Local (polling, sin VM)
 
-### 3.1 Crear el bot
+El proxy corre en tu Mac. Con ngrok puedes exponer el puerto 3001 para recibir webhooks de Telegram sin necesidad de VM.
 
-1. Abrir Telegram → buscar `@BotFather`
-2. `/newbot` → nombre → username (debe terminar en `bot`)
-3. Guardar el **token** → va a `.env` como `TG_TOKEN`
-4. Obtener tu chat_id: hablar con `@userinfobot`
+### 2.1 Instalar ngrok
 
-### 3.2 Modo actual (polling) vs Webhook
+```bash
+brew install ngrok/ngrok/ngrok
+# o descargar desde https://ngrok.com (free plan)
+```
 
-- **Polling:** el proxy hace GET a Telegram cada N segundos. Funciona local (Mac).
-- **Webhook:** Telegram llama a TU servidor cuando llega un mensaje. Requiere HTTPS público. Ideal para VM Oracle.
+### 2.2 Configurar cuenta ngrok
 
-**Configurar webhook (en la VM):**
+1. Registrarse en https://ngrok.com (gratis)
+2. Copiar el authtoken: `ngrok config add-authtoken TU_TOKEN`
+
+### 2.3 Exponer el proxy
+
+```bash
+ngrok http 3001
+```
+
+Ngrok dará una URL pública tipo `https://abc123.ngrok.io`.
+
+### 2.4 Configurar webhook de Telegram
+
 ```bash
 curl -X POST "https://api.telegram.org/bot<TU_TOKEN>/setWebhook" \
-  -d "url=https://TU_IP_O_DOMINIO/api/telegram/webhook"
+  -d "url=https://abc123.ngrok.io/api/telegram/webhook"
 ```
 
-El proxy necesita endpoint `POST /api/telegram/webhook` que reciba updates.
+**Limitación free plan ngrok:** la URL cambia cada vez que reinicias. Para uso diario basta con polling (el proxy ya lo hace automáticamente cuando está corriendo).
 
-### 3.3 Comandos planeados (Phase II)
+### 2.5 Comandos Telegram planeados (Phase II)
 
 | Comando | Acción |
 |---------|--------|
 | `/positions` | Lista posiciones abiertas con uPnL live |
 | `/close BTC` | Cierra posición de BTC en Binance |
 | `/pnl` | Resumen P&L del día |
-| `/gasto 15000 CLP Almuerzo` | Registra gasto en módulo de gastos |
 | `/balance` | Muestra balance por cuenta |
 | `/sl BTC 42000` | Actualiza SL de posición BTC |
+| `/gasto 15000 CLP Almuerzo` | Registra gasto (módulo futuro) |
 
-### 3.4 Seguridad
+### 2.6 Seguridad
 
-El bot SOLO debe responder a tu `chat_id`. En cada handler:
+El bot solo responde a tu `chat_id`. En cada handler:
 ```js
 if (msg.chat.id.toString() !== process.env.TG_CHAT_ID) return;
 ```
 
 ---
 
-## 4. Discord Bot — Listener Chroma
+## 3. Discord Bot — Listener Chroma
 
-### 4.1 Crear aplicación Discord
+### 3.1 Crear aplicación Discord
 
 1. Ir a https://discord.com/developers/applications
 2. New Application → nombre (ej: `chroma-listener`)
-3. Bot → Add Bot → copiar **token** → va a `.env` como `DISCORD_BOT_TOKEN`
+3. Bot → Add Bot → copiar **token**
 4. OAuth2 → URL Generator:
    - Scopes: `bot`
    - Permissions: `Read Messages/View Channels`, `Read Message History`
-5. Copiar URL generada → abrir en browser → invitar al servidor de Chroma
-   - **Necesitas tener permisos de admin en el servidor de Chroma para invitar bots**
-   - Si no puedes, alternativa: usar un user token (requiere cuenta propia en el servidor)
+5. Copiar URL → invitar al servidor de Chroma
+   - Necesitas permisos de admin en Chroma para invitar bots
 
-### 4.2 Obtener ID del canal #new-trades
+### 3.2 Obtener ID del canal #new-trades
 
-En Discord: activar modo developer (Settings → Advanced → Developer Mode).
-Click derecho en `#new-trades` → Copy ID → `DISCORD_CHANNEL_ID` en `.env`.
+En Discord: Settings → Advanced → Developer Mode.
+Click derecho en `#new-trades` → Copy ID.
 
-### 4.3 Formato de mensaje que hay que parsear
+### 3.3 Formato de mensaje a parsear
 
 Basado en las screenshots, el mensaje tiene:
 - Analista (ej: "Silla")
 - Par (ej: "COMPUSDT")
 - Dirección (LONG / SHORT)
-- Entry price
-- SL
-- TP (puede venir en mensaje posterior/editado)
+- Entry price, SL, TP (puede actualizarse en el mismo mensaje)
 
-El parser debe ser tolerante a actualizaciones del mensaje (event `messageUpdate`).
+El parser debe ser tolerante a `messageUpdate` events.
 
-### 4.4 Configuración por analista (Maintainers → Discord/Calls)
+### 3.4 Config por analista (Maintainers → Discord/Calls)
 
 Estructura propuesta en localStorage (`discordConfig`):
 ```json
@@ -215,96 +152,81 @@ Estructura propuesta en localStorage (`discordConfig`):
 }
 ```
 
-- `auto` → abre posición directo en Binance (1R o el risk configurado)
-- `ask` → manda mensaje TG preguntando si quiero entrar (responder SI/NO)
+- `auto` → abre posición directo en Binance (X R configurado)
+- `ask` → manda TG preguntando si quiero entrar (responder SI/NO)
 - `ignore` → no hace nada
 
 ---
 
-## 5. Arquitectura Final en Oracle VM
+## 4. VM en la Nube (solo si es necesario en el futuro)
+
+Si en algún momento el proxy necesita correr 24/7 sin depender de tu Mac:
+
+| Opción | Costo | Nota |
+|--------|-------|------|
+| **Fly.io** | $0–5/mes | Free tier generoso, CLI sencillo |
+| Railway | $5/mes | Deploy desde GitHub, muy fácil |
+| DigitalOcean Droplet | $6/mes | El más confiable |
+| AWS Lightsail | $3.50/mes | Buen precio, más complejo |
+
+**Recomendación actual:** No necesitas VM. El proxy corre local, Supabase maneja la BD en la nube. Si quieres TG bidireccional 24/7 → evaluar Fly.io ($0-5/mes).
+
+---
+
+## 5. Arquitectura actual
 
 ```
-Internet
-    │
-    ▼
-Nginx (puerto 443 HTTPS)
-    │
-    ▼
-proxy.cjs (puerto 3001)
-    ├── /api/binance/*          → Binance Futures API
-    ├── /api/db/*               → PostgreSQL local
-    ├── /api/telegram/webhook   → recibe updates de TG
-    ├── /api/prices/*           → Yahoo Finance, HL, CoinGecko
-    └── /api/discord/*          → (Phase II) acciones desde Discord
+Tu Mac (localhost)
+  ├── React/Vite app (localhost:5173)
+  └── proxy.cjs (localhost:3001)
+        ├── /api/binance/*     → Binance Futures API
+        ├── /api/db/*          → Supabase PostgreSQL (SSL)
+        ├── /api/prices/*      → Yahoo Finance, HL, CoinGecko
+        └── /api/telegram/*    → notificaciones salientes
 
-PostgreSQL (local, solo accesible desde localhost)
-    └── trading_fw DB
+Supabase Cloud
+  └── PostgreSQL → trades, historico BD
 
-Discord Bot (proceso separado o integrado en proxy)
-    └── escucha #new-trades → parsea → decide acción → ejecuta
+GitHub
+  └── código fuente (sin credenciales)
 ```
 
 ---
 
-## 6. Workflow de Deploy
-
-Cada vez que hagas cambios locales:
-
-```bash
-# Local → push a GitHub
-git add -p   # agregar solo lo que revisaste
-git commit -m "descripción del cambio"
-git push origin main
-
-# En la VM Oracle → pull y restart
-ssh ubuntu@IP_ORACLE
-cd mi-trading
-git pull origin main
-npm install   # solo si cambiaron dependencias
-pm2 restart trading-proxy
-```
-
-Futuro: GitHub Actions para deploy automático al hacer push a `main`.
-
----
-
-## 7. Costos estimados
+## 6. Costos estimados (setup actual)
 
 | Servicio | Costo/mes |
 |----------|-----------|
-| Oracle VM (A1 Flex 4 OCPU / 24GB) | **$0** (Always Free) |
-| Oracle DB Storage 200GB | **$0** (Always Free) |
-| DuckDNS dominio | **$0** |
+| Supabase (free tier) | **$0** |
+| GitHub | **$0** |
 | Telegram Bot | **$0** |
 | Discord Bot | **$0** |
-| **Total Phase II** | **$0/mes** |
+| ngrok (free) | **$0** |
+| **Total Phase II actual** | **$0/mes** |
 
-> Si en el futuro necesitamos más computo (ML, backtesting pesado) → evaluar
-> DigitalOcean $6/mes o AWS Lightsail $3.50/mes. Por ahora Oracle cubre todo.
-
----
-
-## 8. Checklist de setup (en orden)
-
-- [ ] Crear repo privado en GitHub
-- [ ] Crear `.gitignore` correcto antes del primer push
-- [ ] Primer `git push` al repo
-- [ ] Crear cuenta Oracle Free Tier
-- [ ] Crear VM ARM (A1 Flex)
-- [ ] Abrir puertos en Security List + iptables
-- [ ] Instalar dependencias en VM (Node, PostgreSQL, PM2, Nginx)
-- [ ] Clonar repo en VM + `npm install`
-- [ ] Crear `.env` en VM con credenciales (nunca al repo)
-- [ ] Restaurar BD en VM (`psql -f db-setup.sql`)
-- [ ] Iniciar proxy con PM2 y activar startup
-- [ ] Configurar Nginx como reverse proxy
-- [ ] Obtener SSL con Certbot (para webhook TG)
-- [ ] Configurar Telegram webhook apuntando a VM
-- [ ] Crear app Discord + invitar a servidor Chroma
-- [ ] Implementar listener de `#new-trades` en proxy
-- [ ] Implementar UI de config por analista en Maintainers
-- [ ] Implementar módulo de gastos personales (Tab nueva)
+> Si en el futuro se necesita proxy 24/7 → Fly.io Free Tier (~$0–5/mes).
 
 ---
 
-*Última actualización: 2026-02-28*
+## 7. Checklist de setup Supabase
+
+- [ ] Crear cuenta en supabase.com
+- [ ] Crear proyecto → anotar contraseña BD
+- [ ] Copiar host desde Project Settings → Database
+- [ ] Configurar en Maintainers → DB (host, puerto, user, password, ✅ SSL)
+- [ ] Inicializar schema via SQL Editor de Supabase (db-setup.sql)
+- [ ] Verificar conexión haciendo un sync o cargando trades
+- [ ] Hacer push de la primera operación real para confirmar INSERT
+
+## 8. Backlog Phase II (en orden de prioridad)
+
+1. **Discord Chroma listener** — parsear #new-trades → ejecutar por Binance API
+2. **Telegram bidireccional** — comandos /positions, /close, /pnl
+3. **Módulo de gastos personales** — tab nueva + ingreso por TG
+4. **Alertas automáticas** — entry hit, SL hit, TP hit (polling de precios en loop)
+5. **Breakout/Kraken API** — si se compra cuenta de prop trading
+6. **Proxy 24/7** — Fly.io cuando se necesite independencia del Mac
+
+---
+
+*Última actualización: 2026-03-01 — Oracle descartado, Supabase como BD cloud primaria*
