@@ -518,7 +518,8 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
   const normalizeSymbol = (raw) => {
     const s = raw.trim().toUpperCase();
     const QUOTES = ["USDT","BUSD","USDC","BTC","ETH","BNB"];
-    if (QUOTES.some(q => s.endsWith(q))) return s;
+    // s.length > q.length garantiza que "BTC" no matchee contra sí mismo como quote
+    if (QUOTES.some(q => s.endsWith(q) && s.length > q.length)) return s;
     return s + "USDT";
   };
 
