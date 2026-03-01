@@ -946,15 +946,21 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
     };
 
     // 5. Position tracking: agrega cierres parciales de la misma posición
-    //    Abre: realizedPnl == 0 (apertura de posición)
-    //    Cierra: realizedPnl != 0 (cierre total o parcial)
+    //    isClose se determina por dirección relativa a curPos (no por realizedPnl)
+    //    → funciona incluso en trades breakeven (realizedPnl exactamente 0)
+    //    Si no hay curPos (sin posición abierta), se usa realizedPnl para detectar
+    //    cierres huérfanos (posición abierta antes del período consultado).
     //    Cuando closedQty >= openQty → posición completamente cerrada → 1 entrada
     const allOrders = Object.values(byOrder).sort((a, b) => a.time - b.time);
     const positions = [];
     let curPos = null, openQty = 0, closedQty = 0;
 
     for (const ord of allOrders) {
-      const isClose = Math.abs(ord.realizedPnl) > 0.0001;
+      // Dirección opuesta a la posición actual = cierre (Long+SELL, Short+BUY)
+      // Fallback a realizedPnl sólo cuando no hay posición abierta (cierres huérfanos)
+      const isClose = curPos
+        ? (curPos.type === "Long" ? !ord.buyer : ord.buyer)
+        : Math.abs(ord.realizedPnl) > 0.0001;
 
       if (!isClose) {
         // Orden de apertura — incluir fee de apertura en el PnL

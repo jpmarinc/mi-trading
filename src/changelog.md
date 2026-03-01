@@ -4,6 +4,17 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-01 — Sesión 12 (iteración 4)
+
+### Fix: Reconciliación — detección isClose por dirección (no por realizedPnl)
+
+**proxy.cjs — position tracking**
+- Root cause 5: `Math.abs(realizedPnl) > 0.0001` falla en trades breakeven (realizedPnl exactamente 0). LTCUSDT mostraba 1 trade cuando Binance mostraba 3 porque los cierres BE se clasificaban como aperturas.
+- Fix: `isClose` ahora usa dirección relativa a `curPos`. Si hay Long abierta y llega SELL → cierre; Short + BUY → cierre. Fallback a `realizedPnl` solo cuando `curPos = null` (cierres huérfanos de períodos anteriores).
+- Estado final: N° de trades y PnL coinciden con Binance Position History (LIT ✓, BTC ✓, LTC ✓).
+
+---
+
 ## 2026-03-01 — Sesión 12 (iteración 3)
 
 ### Fix: Reconciliación Binance — opening fee + funding fee por posición
