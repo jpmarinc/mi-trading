@@ -177,10 +177,16 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
   // §4 — Reconciliar Binance state
   const [bnRecAccount, setBnRecAccount]     = useState("");
   const [bnRecSymbol, setBnRecSymbol]       = useState("");
+  const [bnRecStartDate, setBnRecStartDate] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().split("T")[0];
+  });
+  const [bnRecEndDate, setBnRecEndDate]     = useState(new Date().toISOString().split("T")[0]);
   const [bnRecLoading, setBnRecLoading]     = useState(false);
   const [bnRecTrades, setBnRecTrades]       = useState([]);
   const [bnRecSelected, setBnRecSelected]   = useState(new Set());
   const [bnRecImporting, setBnRecImporting] = useState(false);
+  const [bnClearLoading, setBnClearLoading] = useState(false);
 
   // Auto-seleccionar la primera cuenta Binance con API configurada
   useEffect(() => {
@@ -520,10 +526,9 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
     const recAcc = accounts.find(a => a.id === bnRecAccount);
     if (!recAcc?.apiKey || !recAcc?.apiSecret) { toast.error("Reconciliar", "Elegí una cuenta Binance con API configurada"); return; }
     if (!bnRecSymbol.trim()) { toast.error("Reconciliar", "Ingresá un símbolo (ej: BTC, ETHUSDT)"); return; }
-    const symbol = normalizeSymbol(bnRecSymbol);
-    // Dump completo: desde lanzamiento de Binance Futures hasta ahora
-    const startTs = new Date("2019-09-01").getTime();
-    const endTs   = Date.now();
+    const symbol  = normalizeSymbol(bnRecSymbol);
+    const startTs = new Date(bnRecStartDate).getTime();
+    const endTs   = new Date(bnRecEndDate + "T23:59:59").getTime();
     setBnRecLoading(true);
     setBnRecTrades([]);
     setBnRecSelected(new Set());
@@ -534,7 +539,7 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
           apiKey: recAcc.apiKey, apiSecret: recAcc.apiSecret,
           symbol, startTime: startTs, endTime: endTs
         }),
-        signal: AbortSignal.timeout(120000)
+        signal: AbortSignal.timeout(60000)
       });
       const d = await r.json();
       if (!d.ok) { toast.error("Binance", d.msg); setBnRecLoading(false); return; }
@@ -571,6 +576,22 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
       } else toast.error("BD", d.error);
     } catch(e) { toast.error("BD", e.message); }
     setBnRecImporting(false);
+  };
+
+  const clearBnTrades = async () => {
+    if (!dbConfig?.host) { toast.error("BD", "Configurá PostgreSQL en Maintainers"); return; }
+    if (!confirm("¿Borrar TODOS los trades importados desde Binance (bn_order_id IS NOT NULL)?\nEsta acción es irreversible — hacelo antes de reimportar con los datos corregidos.")) return;
+    setBnClearLoading(true);
+    try {
+      const r = await fetch(`${PROXY}/api/db/clear-bn-trades`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ config: dbConfig })
+      });
+      const d = await r.json();
+      if (d.ok) toast.success("Borrado ✅", `${d.deleted} trades de Binance eliminados de la BD`);
+      else toast.error("BD", d.msg || d.error);
+    } catch(e) { toast.error("BD", e.message); }
+    setBnClearLoading(false);
   };
 
   const toggleRecSel = (id) => {
@@ -864,11 +885,11 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
         <div className="card">
           <div className="ct">🔄 Importar Historial de Trades desde Binance</div>
           <div className="al ai" style={{ fontSize:10, marginBottom:8 }}>
-            <strong>¿Para qué sirve?</strong> Trae <strong>todos</strong> los trades de Binance Futures (desde el inicio de la cuenta) y los guarda en tu BD PostgreSQL.<br/>
+            <strong>¿Para qué sirve?</strong> Trae los trades de Binance Futures del período seleccionado y los guarda en tu BD PostgreSQL.<br/>
             Ingresá solo el par base (ej: <code>BTC</code>) y se buscará <code>BTCUSDT</code> automáticamente. La deduplicación es por Order ID — podés correrlo varias veces sin duplicar.
           </div>
-          <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-            <div className="fi" style={{ flex:1 }}>
+          <div className="g3" style={{ marginBottom:8 }}>
+            <div className="fi">
               <label>Cuenta Binance</label>
               <select value={bnRecAccount} onChange={e => setBnRecAccount(e.target.value)}>
                 <option value="">— Elegir cuenta —</option>
@@ -877,17 +898,30 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
                 ))}
               </select>
             </div>
-            <div className="fi" style={{ flex:1 }}>
+            <div className="fi">
               <label>Símbolo <span style={{ color:"#8899aa", fontSize:9 }}>(ej: BTC → BTCUSDT automático)</span></label>
               <input placeholder="BTC, ETH, LTC..." value={bnRecSymbol}
                 onChange={e => setBnRecSymbol(e.target.value.toUpperCase())}/>
             </div>
+            <div className="fi">
+              <label>Rango de fechas</label>
+              <div style={{ display:"flex", gap:4 }}>
+                <input type="date" value={bnRecStartDate} onChange={e => setBnRecStartDate(e.target.value)} style={{ flex:1 }}/>
+                <input type="date" value={bnRecEndDate}   onChange={e => setBnRecEndDate(e.target.value)}   style={{ flex:1 }}/>
+              </div>
+            </div>
           </div>
-          <div style={{ marginBottom:10 }}>
-            <button className="btn bp" style={{ width:"100%" }}
+          <div style={{ display:"flex", gap:8, marginBottom:10 }}>
+            <button className="btn bp" style={{ flex:1 }}
               onClick={fetchBnTradeHistory}
               disabled={bnRecLoading || !bnRecAccount || !bnRecSymbol.trim()}>
-              {bnRecLoading ? "⟳ Consultando historial completo..." : "🔍 Consultar historial completo"}
+              {bnRecLoading ? "⟳ Consultando..." : "🔍 Consultar historial"}
+            </button>
+            <button className="btn br" style={{ flex:"0 0 auto" }}
+              onClick={clearBnTrades}
+              disabled={bnClearLoading}
+              title="Borra TODOS los trades importados desde Binance para reimportarlos con datos corregidos">
+              {bnClearLoading ? "⟳ Borrando..." : "🗑️ Limpiar BD Binance"}
             </button>
           </div>
 

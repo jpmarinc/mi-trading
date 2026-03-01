@@ -4,6 +4,20 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-01 — Sesión 12 (iteración 5 — corrección)
+
+### UX Reconciliación Binance — limpiar BD + auto-USDT + auto-cuenta
+
+**TradeTab.jsx**
+- Restaurado selector de rango de fechas (rollback del cambio anterior que lo eliminaba).
+- Mantenido: `normalizeSymbol()` auto-append USDT, auto-selección de cuenta Binance, sin botón Fix Fees.
+- Nueva función `clearBnTrades` + botón "🗑️ Limpiar BD Binance": hard-delete de todos los trades con `bn_order_id IS NOT NULL` (trades importados de Binance con datos erróneos — PnL, dirección, fees mal calculadas).
+
+**proxy.cjs**
+- Nuevo endpoint `POST /api/db/clear-bn-trades`: hard-delete `WHERE bn_order_id IS NOT NULL`. Usar antes de reimportar con el motor corregido.
+
+---
+
 ## 2026-03-01 — Sesión 12 (iteración 5)
 
 ### UX Reconciliación Binance — dump completo + auto-USDT + auto-cuenta

@@ -1074,6 +1074,24 @@ app.post("/api/db/import-bn-trades", async (req, res) => {
   }
 });
 
+// ── DB: borrar todos los trades importados desde Binance ──────────────────────
+// POST /api/db/clear-bn-trades  { config }
+// Hard-delete todos los registros con bn_order_id IS NOT NULL.
+// Usar antes de reimportar con el motor corregido.
+app.post("/api/db/clear-bn-trades", async (req, res) => {
+  const { config } = req.body;
+  const pool = getPool(config);
+  if (!pool) return res.status(503).json({ ok: false, msg: "pg no instalado" });
+  const client = await pool.connect();
+  try {
+    const r = await client.query(
+      `DELETE FROM trades WHERE bn_order_id IS NOT NULL`
+    );
+    res.json({ ok: true, deleted: r.rowCount });
+  } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
+  finally { client.release(); }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MÓDULO GASTOS
 // ═══════════════════════════════════════════════════════════════════════════════
