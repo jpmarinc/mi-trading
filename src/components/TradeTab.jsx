@@ -528,45 +528,17 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
       const d = await r.json();
       if (!d.ok) { toast.error("Binance", d.msg); setBnRecLoading(false); return; }
 
-      // Agrupar fills del mismo orderId
-      const grouped = {};
-      for (const t of d.trades) {
-        const oid = String(t.orderId);
-        if (!grouped[oid]) {
-          // buyer=true en closing trade → BUY → cerrando SHORT → tipo Short
-          // buyer=false en closing trade → SELL → cerrando LONG → tipo Long
-          grouped[oid] = {
-            bn_order_id: oid,
-            asset:       t.symbol.replace(/USDT$/i, ""),
-            type:        t.buyer ? "Short" : "Long",
-            account:     recAcc.id,
-            entry:       parseFloat(t.price),
-            pnl:         0,
-            qty:         0,
-            date:        new Date(t.time).toISOString().split("T")[0],
-            closed_at:   new Date(t.time).toISOString(),
-            order_type:  "Market",
-            source:      "S/E",
-            outcome:     null,
-            isClosing:   false,
-          };
-        }
-        if (Math.abs(parseFloat(t.realizedPnl || 0)) > 0) grouped[oid].isClosing = true;
-        // Solo restar commission si está en USDT; si es BNB u otro asset no convertir
-        const commUsd = t.commissionAsset === "USDT" ? parseFloat(t.commission || 0) : 0;
-        grouped[oid].pnl += parseFloat(t.realizedPnl || 0) - commUsd;
-        grouped[oid].qty += parseFloat(t.qty);
-      }
-      const trades = Object.values(grouped)
-        .filter(t => t.isClosing)   // solo órdenes de cierre (apertura: realizedPnl=0 en fills)
-        .map(t => ({
-          ...t, pnl: parseFloat(t.pnl.toFixed(2)),
-          outcome: t.pnl > 0 ? "WIN" : t.pnl < 0 ? "LOSS" : "BE",
-        }));
+      // El proxy ya devuelve posiciones limpias (position tracking + COMMISSION income)
+      // PnL = Closing PnL + Trading Fee (USDT). Funding fee del período en d.funding_period
+      const trades = (d.trades || []).map(t => ({ ...t, account: recAcc.id }));
+
+      if (d.funding_period && Math.abs(d.funding_period) > 0.001)
+        toast.info("Funding Fee", `Funding fee del período: ${d.funding_period > 0 ? "+" : ""}${d.funding_period} USDT (no incluido en PnL individual)`);
+
       setBnRecTrades(trades);
       setBnRecSelected(new Set(trades.map(t => t.bn_order_id)));
       if (trades.length === 0) toast.warning("Sin resultados", "No hay trades en ese período para ese símbolo");
-      else toast.success(`${trades.length} trades encontrados`, "Seleccioná los que querés importar");
+      else toast.success(`${trades.length} posiciones encontradas`, "Seleccioná las que querés importar");
     } catch(e) { toast.error("Binance", e.message); }
     setBnRecLoading(false);
   };

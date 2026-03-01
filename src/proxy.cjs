@@ -846,12 +846,20 @@ app.post("/api/db/trades/list", async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── BINANCE FUTURES: historial de trades ejecutados (userTrades) ──────────────
+// ── BINANCE FUTURES: historial de trades → posiciones reconciliadas ───────────
 // POST /api/binance/futures/tradeHistory
-//   { apiKey, apiSecret, symbol, startTime?, endTime?, limit? }
-// NOTA: Binance requiere symbol obligatorio en fapi/v1/userTrades (error -1102 sin él)
+//   { apiKey, apiSecret, symbol, startTime?, endTime? }
+//
+// Estrategia:
+//   1. userTrades     → fills para dirección, qty, entry price y positionTracking
+//   2. income COMMISSION → fees en USDT (independiente del asset, ya convertido)
+//   3. income FUNDING_FEE → fee de financiamiento del período
+//   4. Tracking de qty: agrega cierres parciales de la misma posición en 1 entrada
+//      (ej: LITUSDT cerrado en 2 órdenes → 1 posición, igual que Position History)
+//
+// PnL final = Closing PnL + Trading Fee (COMMISSION) + Funding Fee proporcional
 app.post("/api/binance/futures/tradeHistory", async (req, res) => {
-  const { apiKey, apiSecret, symbol, startTime, endTime, limit = 1000 } = req.body;
+  const { apiKey, apiSecret, symbol, startTime, endTime } = req.body;
   if (!apiKey || !apiSecret) return res.status(400).json({ ok: false, msg: "Falta apiKey o apiSecret" });
   if (!symbol) return res.status(400).json({ ok: false, msg: "Binance requiere symbol (ej: BTCUSDT). Ingresá el par exacto." });
 
@@ -859,29 +867,132 @@ app.post("/api/binance/futures/tradeHistory", async (req, res) => {
   const start = startTime || (Date.now() - SEVEN_DAYS);
   const end   = endTime   || Date.now();
 
-  // Si el rango supera 7 días, paginar en ventanas de 7 días
   const windows = [];
   let wStart = start;
   while (wStart < end) {
-    const wEnd = Math.min(wStart + SEVEN_DAYS - 1, end);
-    windows.push({ wStart, wEnd });
-    wStart = wEnd + 1;
+    windows.push({ wStart, wEnd: Math.min(wStart + SEVEN_DAYS - 1, end) });
+    wStart = Math.min(wStart + SEVEN_DAYS - 1, end) + 1;
+  }
+
+  // Helper: fetch Binance signed endpoint con paginación por ventanas
+  async function bnFetch(path, extraParams, allWindows) {
+    const out = [];
+    for (const { wStart: ws, wEnd: we } of allWindows) {
+      const ts  = Date.now();
+      const qs  = [...extraParams, `startTime=${ws}`, `endTime=${we}`, `timestamp=${ts}`].join("&");
+      const sig = signBinance(qs, apiSecret);
+      const r   = await pf(`https://fapi.binance.com${path}?${qs}&signature=${sig}`,
+        { headers: { "X-MBX-APIKEY": apiKey } });
+      const d   = await r.json();
+      if (!r.ok || (d.code && d.code < 0)) throw new Error(d.msg || `HTTP ${r.status}`);
+      out.push(...(Array.isArray(d) ? d : []));
+    }
+    return out;
   }
 
   try {
-    const allTrades = [];
-    for (const { wStart, wEnd } of windows) {
-      const ts    = Date.now();
-      const parts = [`symbol=${symbol}`, `limit=${Math.min(limit, 1000)}`, `startTime=${wStart}`, `endTime=${wEnd}`, `timestamp=${ts}`];
-      const qs    = parts.join("&");
-      const sig   = signBinance(qs, apiSecret);
-      const r     = await pf(`https://fapi.binance.com/fapi/v1/userTrades?${qs}&signature=${sig}`,
-        { headers: { "X-MBX-APIKEY": apiKey } });
-      const d = await r.json();
-      if (!r.ok || (d.code && d.code < 0)) return res.json({ ok: false, msg: d.msg || `HTTP ${r.status}` });
-      allTrades.push(...d);
+    const asset = symbol.replace(/USDT$/i, "");
+
+    // 1. Fills de userTrades
+    const fills = await bnFetch("/fapi/v1/userTrades",
+      [`symbol=${symbol}`, "limit=1000"], windows);
+
+    // 2. Commissions desde income (en USDT, ya convertidas por Binance)
+    let incomeComm = [];
+    try {
+      incomeComm = await bnFetch("/fapi/v1/income",
+        [`symbol=${symbol}`, "incomeType=COMMISSION", "limit=1000"], windows);
+    } catch { /* tolerar si la cuenta no tiene permisos de income */ }
+
+    // 3. Funding fees desde income (en USDT)
+    let incomeFunding = [];
+    try {
+      incomeFunding = await bnFetch("/fapi/v1/income",
+        [`symbol=${symbol}`, "incomeType=FUNDING_FEE", "limit=1000"], windows);
+    } catch { /* tolerar */ }
+
+    // Mapas de fee por orderId (COMMISSION) y total funding del período
+    const commByOrder = {};
+    for (const e of incomeComm) {
+      const oid = String(e.info);
+      commByOrder[oid] = (commByOrder[oid] || 0) + parseFloat(e.income || 0); // negativo
     }
-    res.json({ ok: true, trades: allTrades, windows: windows.length });
+    const totalFunding = incomeFunding.reduce((s, e) => s + parseFloat(e.income || 0), 0);
+
+    // 4. Agrupar fills por orderId
+    const byOrder = {};
+    for (const f of fills) {
+      const oid = String(f.orderId);
+      if (!byOrder[oid]) {
+        byOrder[oid] = { oid, buyer: f.buyer, price: parseFloat(f.price), time: f.time, qty: 0, realizedPnl: 0 };
+      }
+      byOrder[oid].qty         += parseFloat(f.qty);
+      byOrder[oid].realizedPnl += parseFloat(f.realizedPnl || 0);
+    }
+
+    // 5. Position tracking: agrega cierres parciales de la misma posición
+    //    Abre: realizedPnl == 0 (apertura de posición)
+    //    Cierra: realizedPnl != 0 (cierre total o parcial)
+    //    Cuando closedQty >= openQty → posición completamente cerrada → 1 entrada
+    const allOrders = Object.values(byOrder).sort((a, b) => a.time - b.time);
+    const positions = [];
+    let curPos = null, openQty = 0, closedQty = 0;
+
+    for (const ord of allOrders) {
+      const isClose = Math.abs(ord.realizedPnl) > 0.0001;
+
+      if (!isClose) {
+        // Orden de apertura
+        openQty += ord.qty;
+        if (!curPos) {
+          curPos = {
+            // buyer=true en apertura → LONG; buyer=false → SHORT
+            type: ord.buyer ? "Long" : "Short",
+            entry: ord.price, openTime: ord.time,
+            pnl: 0, firstOid: null, closeTime: null,
+          };
+        }
+      } else {
+        // Orden de cierre
+        if (!curPos) {
+          // Cierre huérfano: la apertura fue antes del período consultado
+          // buyer=false en cierre → cerrando LONG; buyer=true → cerrando SHORT
+          curPos = {
+            type: ord.buyer ? "Short" : "Long",
+            entry: ord.price, openTime: ord.time,
+            pnl: 0, firstOid: null, closeTime: null,
+          };
+          openQty = ord.qty; // asumir fully closed
+        }
+        closedQty += ord.qty;
+        const comm = commByOrder[ord.oid] || 0;
+        curPos.pnl      += ord.realizedPnl + comm;
+        curPos.closeTime = ord.time;
+        if (!curPos.firstOid) curPos.firstOid = ord.oid;
+
+        // Posición totalmente cerrada cuando closedQty ≈ openQty
+        const diff = Math.abs(closedQty - openQty);
+        if (diff < Math.max(openQty * 0.001, 0.0001)) {
+          const pnlNet = parseFloat(curPos.pnl.toFixed(4));
+          positions.push({
+            bn_order_id: curPos.firstOid,
+            asset,
+            type:       curPos.type,
+            entry:      curPos.entry,
+            pnl:        pnlNet,
+            qty:        parseFloat(closedQty.toFixed(8)),
+            date:       new Date(curPos.openTime).toISOString().split("T")[0],
+            closed_at:  new Date(curPos.closeTime).toISOString(),
+            order_type: "Market",
+            source:     "S/E",
+            outcome:    pnlNet > 0 ? "WIN" : pnlNet < 0 ? "LOSS" : "BE",
+          });
+          curPos = null; openQty = 0; closedQty = 0;
+        }
+      }
+    }
+
+    res.json({ ok: true, trades: positions, windows: windows.length, funding_period: parseFloat(totalFunding.toFixed(4)) });
   } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
 });
 
