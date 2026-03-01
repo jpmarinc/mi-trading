@@ -32,11 +32,23 @@ export default function App() {
   const [clpSource, setClpSource]  = usePersist("clpSource",     "dolarapi");
   const [tgConfig, setTgConfig]    = usePersist("telegramConfig", { token:"", chatId:"" });
   const [syncing, setSyncing]      = useState(false);
+  const [dbTrades, setDbTrades]    = useState([]);
   const alertsSentRef              = useRef(new Set()); // deduplicar alertas Telegram fase II
   // Ref siempre actualizado a la última versión de openPositions
   // Evita stale closure en syncBinancePositions (useCallback captura versión vieja)
   const openPositionsRef           = useRef(openPositions);
   useEffect(() => { openPositionsRef.current = openPositions; }, [openPositions]);
+
+  // Cargar todos los trades de BD cuando dbConfig tiene password
+  useEffect(() => {
+    if (!dbConfig?.host || !dbConfig?.database || !dbConfig?.password) return;
+    fetch(`${PROXY}/api/db/trades`, {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ config: dbConfig, limit: 5000, offset: 0 })
+    }).then(r => r.json()).then(d => {
+      if (d.rows) setDbTrades(d.rows);
+    }).catch(() => {});
+  }, [dbConfig?.host, dbConfig?.database, dbConfig?.password]);
 
   const { toasts, rm, toast } = useToast();
   const { prices, clpRate, clpOk, loading, refresh, proxyOk } = useMarketData(watchlist, toast, clpSource);
@@ -330,8 +342,8 @@ export default function App() {
           ))}
         </div>
 
-        {tab === "dashboard" && <Dashboard closedTrades={closedTrades} openPositions={openPositions} setOpenPositions={setOP} accounts={accounts} prices={prices} onUpdate={updateClosed} onClose={closePosition} onSyncBinance={syncBinancePositions} syncing={syncing}/>}
-        {tab === "perf"      && <PerformanceTab closedTrades={closedTrades} rValues={rValues} accounts={accounts}/>}
+        {tab === "dashboard" && <Dashboard closedTrades={closedTrades} dbTrades={dbTrades} openPositions={openPositions} setOpenPositions={setOP} accounts={accounts} prices={prices} onUpdate={updateClosed} onClose={closePosition} onSyncBinance={syncBinancePositions} syncing={syncing}/>}
+        {tab === "perf"      && <PerformanceTab closedTrades={closedTrades} dbTrades={dbTrades} rValues={rValues} accounts={accounts}/>}
         {tab === "calc"      && <RiskCalc accounts={accounts} leverageOpts={leverageOpts} prices={prices} rValues={rValues} sendTg={sendTg}/>}
         {tab === "market"    && <MarketTab watchlist={watchlist} setWatchlist={setWL} prices={prices} loading={loading} refresh={refresh} proxyOk={proxyOk} toast={toast}/>}
         {tab === "debts"     && <DebtPlan rValues={rValues} accounts={accounts}/>}

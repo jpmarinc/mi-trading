@@ -74,6 +74,7 @@ src/
 24. **SL/TP -4120 con reduceOnly** → `reduceOnly=true + quantity` en STOP_MARKET/TAKE_PROFIT_MARKET falla con "use Algo Order API". Fix: Para MARKET (posición activa), usar `closePosition=TRUE` sin quantity. Para LIMIT pendiente, NO colocar SL/TP en Binance — solo guardar localmente y mostrar info toast.
 25. **Call dropdown no muestra valor actual** → Si el trade tiene `source` que no está en `callOpts` (ej: "Binance Position Sync"), el select debe renderizar la opción actual como primera opción condicional: `{vals.source && !callOpts.includes(vals.source) && <option value={vals.source}>{vals.source}</option>}`.
 26. **position:relative en th de tabla** → Algunos navegadores ignoran `position:relative` en `<th>`. Usar un `<div style={{position:"relative",display:"inline-block"}}>` wrapper dentro del th para posicionar dropdowns correctamente.
+27. **SL/TP -4120 permanente en esta cuenta** → Binance Futures rechaza `STOP_MARKET`/`TAKE_PROFIT_MARKET` con -4120 ("use Algo Order API") tanto con `closePosition=TRUE` como con `reduceOnly`. No enviar a Binance. `placeSLTPOrders` solo muestra toast informativo con valores para que el usuario los configure manualmente en Binance UI.
 
 ---
 

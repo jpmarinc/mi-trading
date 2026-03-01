@@ -61,14 +61,36 @@ function PerfChart({ trades, rValue }) {
   );
 }
 
-export default function PerformanceTab({ closedTrades, rValues, accounts }) {
-  const [period, setPeriod] = useState("all");
+export default function PerformanceTab({ closedTrades, dbTrades = [], rValues, accounts }) {
+  const [period, setPeriod]         = useState("all");
   const [acctFilter, setAcctFilter] = useState("all");
+  const [callFilter, setCallFilter] = useState("all");
+
+  // Merge localStorage + BD sin duplicados.
+  // localStorage es fuente de verdad; se agregan solo trades de BD que NO tienen local_id en localStorage.
+  const localIds = new Set(closedTrades.map(t => t.id).filter(Boolean));
+  const dbOnly = (dbTrades || []).filter(t => !t.local_id || !localIds.has(Number(t.local_id)));
+  // Normalizar campos de BD al mismo formato que localStorage
+  const dbNorm = dbOnly.map(t => ({
+    ...t,
+    id:        t.local_id || t.id,
+    pnl:       parseFloat(t.pnl) || 0,
+    date:      t.closed_at ? String(t.closed_at).split("T")[0] : t.date,
+    orderType: t.order_type || "Market",
+    source:    t.source || "S/E",
+  }));
+  const allTrades = [...closedTrades, ...dbNorm];
+
+  // Obtener calls distintas para el filtro
+  const callOpts = [...new Set(allTrades.map(t => t.source).filter(Boolean))].sort();
+
   const now = new Date();
-  const filtered = closedTrades.filter(t => {
+  const filtered = allTrades.filter(t => {
     if (acctFilter !== "all" && t.account !== acctFilter) return false;
+    if (callFilter !== "all" && t.source !== callFilter) return false;
     if (period === "all") return true;
-    const d = new Date(t.date || "2026-01-01");
+    const dateStr = t.closed_at ? String(t.closed_at).split("T")[0] : t.date;
+    const d = new Date(dateStr || "2026-01-01");
     return (now - d) / (1000*60*60*24) <= (period === "7d" ? 7 : 30);
   });
 
@@ -122,6 +144,10 @@ export default function PerformanceTab({ closedTrades, rValues, accounts }) {
         <select value={acctFilter} onChange={e => setAcctFilter(e.target.value)} style={{ width:"auto", padding:"4px 8px", fontSize:10 }}>
           <option value="all">Todas las cuentas</option>
           {accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+        <select value={callFilter} onChange={e => setCallFilter(e.target.value)} style={{ width:"auto", padding:"4px 8px", fontSize:10 }}>
+          <option value="all">Todos los calls</option>
+          {callOpts.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
         <div style={{ marginLeft:"auto", fontSize:10, color:"#4a6280" }}>{filtered.length} trades · 1R = ${rVal.toFixed(2)}</div>
       </div>

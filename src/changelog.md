@@ -4,6 +4,54 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-02-28 — Sesión 10
+
+### Fixes (feedback #1–#6 de comentarios.md + backlog)
+
+**#3 — Call "S/E" en reconciliación BN → TradeTab.jsx**
+- Root cause: `source: "Binance"` hardcodeado en el grouping de fills de userTrades.
+- Fix: `source: "S/E"` en el objeto agrupado. También corregido fallback en `proxy.cjs` (`import-bn-trades`).
+
+**#2 — Eliminar botones obsoletos → MaintainersTab.jsx**
+- Removidas las cards "Verificar / Actualizar Schema BD" y "Migrar Historial a BD". La BD ya está operativa, esos botones no son necesarios.
+
+**#1 — SL/TP solo toast informativo → TradeTab.jsx**
+- Root cause: Binance devuelve -4120 permanentemente para STOP_MARKET/TAKE_PROFIT_MARKET en esta cuenta (patrón #27).
+- Fix: `placeSLTPOrders` ya no hace llamadas a Binance. Solo muestra un `toast.warning` con los valores SL/TP para que el usuario los configure manualmente en Binance UI. Se eliminó también el delay de 300ms que ya no tiene sentido.
+
+**#6 — Fees en importación → TradeTab.jsx + proxy.cjs**
+- Root cause: el grouping de fills solo sumaba `realizedPnl`, no descontaba `commission`.
+- Fix importación nueva: `pnl += realizedPnl - commission` por fill en `fetchBnTradeHistory`.
+- Fix BD existente: nuevo endpoint `POST /api/db/fix-bn-fees` — va a Binance, agrupa commission por orderId, hace UPDATE en BD. Botón "🔧 Fix Fees en BD" en la UI de reconciliación (mismo selector de cuenta/símbolo/rango).
+
+**#4 — Performance tab con datos de BD → App.jsx + PerformanceTab.jsx**
+- App.jsx: estado `dbTrades` + `useEffect` que fetcha hasta 5000 trades de BD cuando `dbConfig` tiene password. Se pasa como prop a PerformanceTab y Dashboard.
+- PerformanceTab: merge localStorage + BD sin duplicados (dedup por `local_id`). BD-only trades (reconciliados de Binance) se agregan al pool.
+- Filtro de período usa `closed_at` (BD) o `date` (localStorage) correctamente.
+- Nuevo filtro "Call" dinámico (valores distintos del campo `source` del merge completo).
+
+**#5 — Dashboard P&L Cerradas histórico → Dashboard.jsx**
+- `pnl`, `wr`, `allClosed.length` calculados sobre el merge localStorage + BD.
+- El stat "P&L Cerradas" ahora refleja el PnL real histórico completo, no solo lo que está en localStorage.
+
+**phaseII.md — Documentación de infraestructura**
+- Nuevo archivo con guía completa: GitHub, Oracle Free Tier, Telegram bidireccional, Discord bot, arquitectura VM, costos ($0/mes), checklist de setup.
+
+### Patrón registrado
+- **#27** en CLAUDE.md: SL/TP -4120 permanente → no enviar a Binance, solo toast informativo.
+
+### Archivos modificados
+- `src/components/TradeTab.jsx`
+- `src/components/MaintainersTab.jsx`
+- `src/components/PerformanceTab.jsx`
+- `src/components/Dashboard.jsx`
+- `src/App.jsx`
+- `src/proxy.cjs`
+- `src/claude.md`
+- `src/phaseII.md` (nuevo)
+
+---
+
 ## 2026-02-27 — Sesión 9
 
 ### Fixes (feedback #1–#4 de comentarios.md sesión 9)

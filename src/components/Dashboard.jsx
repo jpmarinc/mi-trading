@@ -52,12 +52,17 @@ function calcLiveUpnlDash(pos, lp) {
   return notional * pctMove * (pos.type === "Long" ? 1 : -1);
 }
 
-export default function Dashboard({ closedTrades, openPositions, setOpenPositions, accounts, prices, onUpdate, onClose, onSyncBinance, syncing }) {
+export default function Dashboard({ closedTrades, dbTrades = [], openPositions, setOpenPositions, accounts, prices, onUpdate, onClose, onSyncBinance, syncing }) {
   const [editingId, setEditingId] = useState(null);
 
-  const pnl = closedTrades.reduce((s, t) => s + (t.pnl || 0), 0);
-  const w   = closedTrades.filter(t => t.outcome === "WIN").length;
-  const l   = closedTrades.filter(t => ["LOSS","Partial L"].includes(t.outcome)).length;
+  // Merge localStorage + BD para PnL histórico real (mismo criterio que PerformanceTab)
+  const localIds  = new Set(closedTrades.map(t => t.id).filter(Boolean));
+  const dbOnly    = (dbTrades || []).filter(t => !t.local_id || !localIds.has(Number(t.local_id)));
+  const allClosed = [...closedTrades, ...dbOnly];
+
+  const pnl = allClosed.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+  const w   = allClosed.filter(t => t.outcome === "WIN").length;
+  const l   = allClosed.filter(t => ["LOSS","Partial L"].includes(t.outcome)).length;
   const anomalies = closedTrades.filter(t => t.anomaly);
 
   const totalBalance = accounts.reduce((s, a) => s + (a.balance || 0), 0);
@@ -68,7 +73,7 @@ export default function Dashboard({ closedTrades, openPositions, setOpenPosition
     return s + (live !== null ? live : (p.upnl || 0));
   }, 0);
   const effectiveBalance = totalBalance + totalLiveUpnl;
-  const wr = closedTrades.length > 0 ? ((w / closedTrades.length) * 100).toFixed(0) : 0;
+  const wr = allClosed.length > 0 ? ((w / allClosed.length) * 100).toFixed(0) : 0;
 
   const exp = () => {
     const r = [
@@ -121,7 +126,7 @@ export default function Dashboard({ closedTrades, openPositions, setOpenPosition
           {
             l:"P&L Cerradas",
             v:`${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}`,
-            s:`${closedTrades.length} ops`,
+            s:`${allClosed.length} ops`,
             c: pnl >= 0 ? "green" : "red"
           },
           {
