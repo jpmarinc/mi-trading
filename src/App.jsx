@@ -118,8 +118,10 @@ export default function App() {
     setCT(p => [...p, full]);
     setOP(p => p.filter(x => x.id !== pos.id));
     persistTrade(full, dbConfig);
-    const sign = pnl >= 0 ? "✅" : "❌";
-    sendTg(`${sign} *Posición cerrada*\n📍 ${pos.asset} ${pos.type} @ ${pos.entry}\nP&L: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}\nCuenta: ${pos.account}`);
+    const sign   = pnl >= 0 ? "✅" : "❌";
+    const slLine = pos.sl ? `\nSL: $${pos.sl}` : "";
+    const tpLine = pos.tp ? `\nTP: $${pos.tp}` : "";
+    sendTg(`${sign} *Posición cerrada*\n📍 ${pos.asset} ${pos.type} @ ${pos.entry}${slLine}${tpLine}\nP&L: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}\nCuenta: ${pos.account}`);
   }, [dbConfig, tgConfig]);
 
   // §6 — Alertas Telegram fase II: entry hit / SL hit / TP hit
@@ -199,6 +201,33 @@ export default function App() {
             if (order.type === "TAKE_PROFIT_MARKET" && sp > 0) slTpMap[sym].tp = sp;
           }
 
+          // Algo orders (STOP/TP condicionales post-nov-2025 — no aparecen en openOrders)
+          try {
+            const ar = await fetch(`${PROXY}/api/binance/futures/algoOpenOrders`, {
+              method:"POST", headers:{"Content-Type":"application/json"},
+              body: JSON.stringify({ apiKey: acc.apiKey, apiSecret: acc.apiSecret }),
+              signal: AbortSignal.timeout(8000)
+            });
+            const ad = await ar.json();
+            if (ad.ok && ad.orders?.length) {
+              ad.orders.forEach(o => {
+                const sym = o.symbol.replace(/USDT$/i, "");
+                const tp_ = parseFloat(o.triggerPrice);
+                if (!slTpMap[sym]) slTpMap[sym] = {};
+                // Clasificar SL vs TP por tipo de orden o por side de la orden algo
+                // type=STOP_MARKET → SL | type=TAKE_PROFIT_MARKET → TP
+                // Fallback: side=SELL+triggerPrice<entry normalmente SL (se ajusta post positionRisk)
+                if (o.type === "STOP_MARKET"        && tp_ > 0) slTpMap[sym].sl = tp_;
+                else if (o.type === "TAKE_PROFIT_MARKET" && tp_ > 0) slTpMap[sym].tp = tp_;
+                else if (tp_ > 0) {
+                  // Sin type explícito: guardar raw para ajustar tras conocer entry
+                  if (!slTpMap[sym]._algoRaw) slTpMap[sym]._algoRaw = [];
+                  slTpMap[sym]._algoRaw.push({ triggerPrice: tp_, side: o.side });
+                }
+              });
+            }
+          } catch { /* silent */ }
+
           setOP(p => p.map(pos => {
             if (pos.account !== acc.id || !slTpMap[pos.asset]) return pos;
             const upd = {};
@@ -232,7 +261,9 @@ export default function App() {
               };
               setOP(p => [...p, newPos]);
               setWL(p => p.find(w => w.symbol === symbol) ? p : [...p, { symbol, source:"auto" }]);
-              sendTg(`📡 *Nueva orden detectada (Binance)*\n📍 ${symbol} ${order.side === "BUY" ? "Long" : "Short"}\nTipo: Limit @ $${parseFloat(order.price).toFixed(2)}\nCuenta: ${acc.name}`);
+              const nsl = slTpMap[symbol]?.sl; const ntp = slTpMap[symbol]?.tp;
+              const nslL = nsl ? `\nSL: $${nsl}` : ""; const ntpL = ntp ? `\nTP: $${ntp}` : "";
+              sendTg(`📡 *Nueva orden detectada (Binance)*\n📍 ${symbol} ${order.side === "BUY" ? "Long" : "Short"}\nTipo: Limit @ $${parseFloat(order.price).toFixed(2)}${nslL}${ntpL}\nCuenta: ${acc.name}`);
               added++;
             }
           }
@@ -259,17 +290,34 @@ export default function App() {
           for (const pos of d.positions) {
             const symbol = pos.symbol.replace(/USDT$/i, "");
             const posKey = `bn_pos_${acc.id}_${pos.symbol}`;
+            const amt    = parseFloat(pos.positionAmt);
+            const entry  = parseFloat(pos.entryPrice);
+            const isLong = amt > 0;
+
+            // Resolver _algoRaw usando entry price ahora que lo conocemos
+            if (slTpMap[symbol]?._algoRaw) {
+              slTpMap[symbol]._algoRaw.forEach(({ triggerPrice }) => {
+                if (isLong) {
+                  if (triggerPrice < entry) slTpMap[symbol].sl = triggerPrice;
+                  else                      slTpMap[symbol].tp = triggerPrice;
+                } else {
+                  if (triggerPrice > entry) slTpMap[symbol].sl = triggerPrice;
+                  else                      slTpMap[symbol].tp = triggerPrice;
+                }
+              });
+              delete slTpMap[symbol]._algoRaw;
+            }
+
             // Usar ref aquí también
             const alreadyTracked = openPositionsRef.current.some(p => p.bnPositionKey === posKey);
             if (!alreadyTracked) {
-              const amt  = parseFloat(pos.positionAmt);
               const upnl = parseFloat(pos.unRealizedProfit);
               const newPos = {
                 id: posKey,
                 asset: symbol,
-                type: amt > 0 ? "Long" : "Short",
+                type: isLong ? "Long" : "Short",
                 account: acc.id,
-                entry: parseFloat(pos.entryPrice),
+                entry,
                 sl: slTpMap[symbol]?.sl || null,
                 tp: slTpMap[symbol]?.tp || null,
                 leverage: parseInt(pos.leverage) || 20,
@@ -284,7 +332,9 @@ export default function App() {
               };
               setOP(p => [...p, newPos]);
               setWL(p => p.find(w => w.symbol === symbol) ? p : [...p, { symbol, source:"auto" }]);
-              sendTg(`📡 *Posición activa detectada (Binance)*\n📍 ${symbol} ${amt > 0 ? "Long" : "Short"} @ $${parseFloat(pos.entryPrice).toFixed(2)}\nuPnL: ${upnl >= 0 ? "+" : ""}$${upnl.toFixed(2)}\nCuenta: ${acc.name}`);
+              const psl = slTpMap[symbol]?.sl; const ptp = slTpMap[symbol]?.tp;
+              const pslL = psl ? `\nSL: $${psl}` : ""; const ptpL = ptp ? `\nTP: $${ptp}` : "";
+              sendTg(`📡 *Posición activa detectada (Binance)*\n📍 ${symbol} ${isLong ? "Long" : "Short"} @ $${entry.toFixed(2)}\nuPnL: ${upnl >= 0 ? "+" : ""}$${upnl.toFixed(2)}${pslL}${ptpL}\nCuenta: ${acc.name}`);
               added++;
             }
           }

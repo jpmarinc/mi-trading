@@ -254,6 +254,31 @@ app.post("/api/binance/futures/algoOrder", async (req, res) => {
   } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
 });
 
+// ── BINANCE FUTURES: consultar algo orders abiertos (SL/TP condicionales) ─────
+// POST /api/binance/futures/algoOpenOrders
+// { apiKey, apiSecret }
+// Devuelve las órdenes condicionales activas (STOP_MARKET / TAKE_PROFIT_MARKET)
+// que desde nov-2025 ya no aparecen en /fapi/v1/openOrders
+app.post("/api/binance/futures/algoOpenOrders", async (req, res) => {
+  const { apiKey, apiSecret } = req.body;
+  if (!apiKey || !apiSecret)
+    return res.status(400).json({ ok: false, msg: "Faltan: apiKey, apiSecret" });
+
+  const ts  = Date.now();
+  const qs  = `algoType=CONDITIONAL&timestamp=${ts}`;
+  const sig = signBinance(qs, apiSecret);
+
+  try {
+    const r = await pf(`https://fapi.binance.com/fapi/v1/algoOrders/openOrders?${qs}&signature=${sig}`, {
+      headers: { "X-MBX-APIKEY": apiKey },
+    });
+    const d = await r.json();
+    if (!r.ok || (d.code && d.code < 0))
+      return res.json({ ok: false, msg: `Binance ${d.code}: ${d.msg}` });
+    res.json({ ok: true, orders: d.orders || [] });
+  } catch(e) { res.status(500).json({ ok: false, msg: e.message }); }
+});
+
 // ── BINANCE FUTURES: probar TODAS las estrategias SL/TP ───────────────────────
 // POST /api/binance/futures/try-sltp
 // { apiKey, apiSecret, symbol, slSide, sl, tp, qty }

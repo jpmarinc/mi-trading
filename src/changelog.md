@@ -4,6 +4,22 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-02 — Sesión 13
+
+### Alertas Telegram — SL/TP en mensajes + algoOpenOrders para sync
+
+**App.jsx**
+- `closePosition()`: mensaje TG ahora incluye `SL: $X` y `TP: $X` si están definidos.
+- Sync orden Limit detectada: mensaje incluye SL/TP del `slTpMap` del símbolo.
+- Sync posición activa detectada: mensaje incluye SL/TP del `slTpMap` del símbolo.
+- `syncBinancePositions`: después del fetch de `openOrders`, se hace un segundo fetch a `/api/binance/futures/algoOpenOrders` para obtener las órdenes CONDITIONAL (STOP_MARKET / TAKE_PROFIT_MARKET) que desde nov-2025 ya no aparecen en `openOrders`. Se actualiza `slTpMap` con ellas. Si Binance no devuelve `type`, se aplica clasificación por entry price (triggerPrice < entry → SL para Long, etc.) usando `_algoRaw` como buffer intermedio.
+- Las alertas de Phase II (SL hit / TP hit / entry hit) ya existían y son correctas; el gap era que `pos.sl/pos.tp` quedaban `null` al sincronizar. Ahora con algoOpenOrders se populan correctamente.
+
+**proxy.cjs**
+- Nuevo endpoint `POST /api/binance/futures/algoOpenOrders`: llama `GET /fapi/v1/algoOrders/openOrders?algoType=CONDITIONAL` con firma HMAC. Devuelve `{ ok, orders }`.
+
+---
+
 ## 2026-03-01 — Sesión 12 (iteración 5 — corrección)
 
 ### UX Reconciliación Binance — limpiar BD + auto-USDT + auto-cuenta
