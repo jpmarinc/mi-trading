@@ -227,11 +227,10 @@ app.post("/api/binance/futures/algoOrder", async (req, res) => {
   if (!apiKey || !apiSecret || !symbol || !side || !type || !triggerPrice)
     return res.status(400).json({ ok: false, msg: "Faltan: symbol, side, type, triggerPrice" });
 
-  const filters = await getBnFuturesFilters(symbol);
-  if (!filters) return res.json({ ok: false, msg: `No se pudo obtener filtros de precisión para ${symbol}. Reintentar.` });
-  const roundTrigger   = roundToStep(parseFloat(triggerPrice), filters.tickSize);
+  const filters        = await getBnFuturesFilters(symbol);
+  const roundTrigger   = filters ? roundToStep(parseFloat(triggerPrice), filters.tickSize) : parseFloat(triggerPrice);
   const useClosePos    = String(closePosition).toLowerCase() === "true";
-  const roundQty       = (!useClosePos && quantity) ? roundToStep(parseFloat(quantity), filters.stepSize) : parseFloat(quantity || 0);
+  const roundQty       = (!useClosePos && quantity && filters) ? roundToStep(parseFloat(quantity), filters.stepSize) : parseFloat(quantity || 0);
 
   const ts    = Date.now();
   const parts = [
