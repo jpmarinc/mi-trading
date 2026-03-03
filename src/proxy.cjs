@@ -145,19 +145,23 @@ function roundToStep(value, step) {
 const _filterCache = {};
 
 // Obtener stepSize (qty) y tickSize (precio) para un símbolo de futuros
-async function getBnFuturesFilters(symbol) {
+// Reintenta 1 vez ante fallo de red para reducir falsos negativos
+async function getBnFuturesFilters(symbol, attempt = 0) {
   if (_filterCache[symbol]) return _filterCache[symbol];
   try {
     const r = await pf(`https://fapi.binance.com/fapi/v1/exchangeInfo?symbol=${symbol}`);
     const d = await r.json();
     const sym = d.symbols?.[0];
-    if (!sym) return null;
+    if (!sym) throw new Error("symbol not found in exchangeInfo");
     const lot   = sym.filters.find(f => f.filterType === "LOT_SIZE");
     const price = sym.filters.find(f => f.filterType === "PRICE_FILTER");
     const result = { stepSize: lot?.stepSize || "0.001", tickSize: price?.tickSize || "0.01" };
-    _filterCache[symbol] = result; // cachear para reutilizar sin latencia extra
+    _filterCache[symbol] = result;
     return result;
-  } catch { return null; }
+  } catch {
+    if (attempt < 1) return getBnFuturesFilters(symbol, attempt + 1);
+    return null;
+  }
 }
 
 // ── BINANCE FUTURES: colocar orden (firmado) ─────────────────────────────────
@@ -177,11 +181,12 @@ app.post("/api/binance/futures/order", async (req, res) => {
   if (!useClosePos && !quantity)
     return res.status(400).json({ ok: false, msg: "Falta quantity" });
 
-  // Obtener filtros del símbolo y redondear
-  const filters   = await getBnFuturesFilters(symbol);
-  const roundQty  = (!useClosePos && quantity && filters) ? roundToStep(parseFloat(quantity), filters.stepSize) : parseFloat(quantity || 0);
-  const roundPx   = (filters && price)     ? roundToStep(parseFloat(price),     filters.tickSize) : price;
-  const roundStop = (filters && stopPrice) ? roundToStep(parseFloat(stopPrice), filters.tickSize) : stopPrice;
+  // Obtener filtros del símbolo y redondear (falla explícito si no se obtienen)
+  const filters = await getBnFuturesFilters(symbol);
+  if (!filters) return res.json({ ok: false, msg: `No se pudo obtener filtros de precisión para ${symbol}. Reintentar.` });
+  const roundQty  = (!useClosePos && quantity) ? roundToStep(parseFloat(quantity), filters.stepSize) : parseFloat(quantity || 0);
+  const roundPx   = price     ? roundToStep(parseFloat(price),     filters.tickSize) : price;
+  const roundStop = stopPrice ? roundToStep(parseFloat(stopPrice), filters.tickSize) : stopPrice;
 
   const ts    = Date.now();
   const parts = [`symbol=${symbol}`, `side=${side}`, `type=${type || "LIMIT"}`];
@@ -220,10 +225,11 @@ app.post("/api/binance/futures/algoOrder", async (req, res) => {
   if (!apiKey || !apiSecret || !symbol || !side || !type || !triggerPrice)
     return res.status(400).json({ ok: false, msg: "Faltan: symbol, side, type, triggerPrice" });
 
-  const filters        = await getBnFuturesFilters(symbol);
-  const roundTrigger   = filters ? roundToStep(parseFloat(triggerPrice), filters.tickSize) : parseFloat(triggerPrice);
+  const filters = await getBnFuturesFilters(symbol);
+  if (!filters) return res.json({ ok: false, msg: `No se pudo obtener filtros de precisión para ${symbol}. Reintentar.` });
+  const roundTrigger   = roundToStep(parseFloat(triggerPrice), filters.tickSize);
   const useClosePos    = String(closePosition).toLowerCase() === "true";
-  const roundQty       = (!useClosePos && quantity && filters) ? roundToStep(parseFloat(quantity), filters.stepSize) : parseFloat(quantity || 0);
+  const roundQty       = (!useClosePos && quantity) ? roundToStep(parseFloat(quantity), filters.stepSize) : parseFloat(quantity || 0);
 
   const ts    = Date.now();
   const parts = [

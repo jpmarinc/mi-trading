@@ -4,6 +4,33 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-02 — Sesión 14
+
+### Fix precisión Binance -1111 + Soporte dual BD (Local + Supabase)
+
+**proxy.cjs**
+- `getBnFuturesFilters`: agrega retry (1 intento extra) antes de devolver null. Lanza error explícito si `symbols[0]` no existe.
+- `/api/binance/futures/order`: si `getBnFuturesFilters` devuelve null tras retry → responde error claro ("No se pudo obtener filtros...") en lugar de enviar qty/precio sin redondear. Elimina condición `filters &&` en roundQty/roundPx (siempre llega con filtros o falla).
+- `/api/binance/futures/algoOrder`: mismo fix.
+
+**RiskCalc.jsx**
+- Qty calculada: `Math.floor(...*1000)/1000` → `parseFloat(...toFixed(8))`. La proxy aplica el redondeo correcto según stepSize del símbolo.
+
+**App.jsx**
+- Nuevo estado `dbConfigSupabase` (usePersist "dbConfigSupabase") y `dbActive` (usePersist "dbActive", default "local").
+- `activeCfg = dbActive === "supabase" ? dbConfigSupabase : dbConfig` — BD activa seleccionable.
+- Todas las operaciones reales (persistTrade, closePosition, addClosed, carga de trades) usan `activeCfg`.
+- MaintainersTab recibe props adicionales: `dbConfigSupabase`, `setDbConfigSupabase`, `dbActive`, `setDbActive`.
+- TradeTab y GastosTab reciben `activeCfg` (no `dbConfig`).
+
+**MaintainersTab.jsx**
+- Panel DB rediseñado: toggle "BD activa" (Local | Supabase) + dos tarjetas de config en paralelo.
+- Tarjeta Local: igual que antes, badge "● ACTIVA" si está seleccionada.
+- Tarjeta Supabase: host/port/database/user/password/ssl + instrucciones específicas (usar Connection parameters, puerto 5432 o 6543 pooler) + test independiente.
+- Ambas tarjetas muestran opacidad reducida cuando no están activas.
+
+---
+
 ## 2026-03-02 — Sesión 13
 
 ### Alertas Telegram — SL/TP en mensajes + algoOpenOrders para sync

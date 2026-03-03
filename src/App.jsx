@@ -30,6 +30,9 @@ export default function App() {
   const [rValues, setRV]           = usePersist("rValues",       DEFAULT_R_VALUES);
   const [sheetsConfig, setSC]      = usePersist("sheetsConfig",  {});
   const [dbConfig, setDBC]         = usePersist("dbConfig",      { host:"localhost", port:"5432", database:"trading_fw", user:"postgres", password:"" });
+  const [dbConfigSupabase, setDBS] = usePersist("dbConfigSupabase", { host:"", port:"5432", database:"postgres", user:"postgres", password:"", ssl:true });
+  const [dbActive, setDbActive]    = usePersist("dbActive",      "local");
+  const activeCfg = dbActive === "supabase" ? dbConfigSupabase : dbConfig;
   const [clpSource, setClpSource]  = usePersist("clpSource",     "dolarapi");
   const [tgConfig, setTgConfig]    = usePersist("telegramConfig", { token:"", chatId:"" });
   const [syncing, setSyncing]      = useState(false);
@@ -40,16 +43,16 @@ export default function App() {
   const openPositionsRef           = useRef(openPositions);
   useEffect(() => { openPositionsRef.current = openPositions; }, [openPositions]);
 
-  // Cargar todos los trades de BD cuando dbConfig tiene password
+  // Cargar todos los trades de BD activa cuando tiene password
   useEffect(() => {
-    if (!dbConfig?.host || !dbConfig?.database || !dbConfig?.password) return;
+    if (!activeCfg?.host || !activeCfg?.database || !activeCfg?.password) return;
     fetch(`${PROXY}/api/db/trades`, {
       method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ config: dbConfig, limit: 5000, offset: 0 })
+      body: JSON.stringify({ config: activeCfg, limit: 5000, offset: 0 })
     }).then(r => r.json()).then(d => {
       if (d.rows) setDbTrades(d.rows);
     }).catch(() => {});
-  }, [dbConfig?.host, dbConfig?.database, dbConfig?.password]);
+  }, [activeCfg?.host, activeCfg?.database, activeCfg?.password]);
 
   const { toasts, rm, toast } = useToast();
   const { prices, clpRate, clpOk, loading, refresh, proxyOk } = useMarketData(watchlist, toast, clpSource);
@@ -105,8 +108,8 @@ export default function App() {
   const addClosed = useCallback(t => {
     const trade = { ...t, id: Date.now() };
     setCT(p => [...p, trade]);
-    persistTrade(trade, dbConfig);
-  }, [dbConfig]);
+    persistTrade(trade, activeCfg);
+  }, [activeCfg]);
 
   const updateClosed = useCallback(t => { setCT(p => p.map(x => x.id === t.id ? t : x)); }, []);
 
@@ -117,12 +120,12 @@ export default function App() {
     const full = { ...trade, anomaly: missing.length > 0, missingFields: missing };
     setCT(p => [...p, full]);
     setOP(p => p.filter(x => x.id !== pos.id));
-    persistTrade(full, dbConfig);
+    persistTrade(full, activeCfg);
     const sign   = pnl >= 0 ? "✅" : "❌";
     const slLine = pos.sl ? `\nSL: $${pos.sl}` : "";
     const tpLine = pos.tp ? `\nTP: $${pos.tp}` : "";
     sendTg(`${sign} *Posición cerrada*\n📍 ${pos.asset} ${pos.type} @ ${pos.entry}${slLine}${tpLine}\nP&L: ${pnl >= 0 ? "+" : ""}$${pnl.toFixed(2)}\nCuenta: ${pos.account}`);
-  }, [dbConfig, tgConfig]);
+  }, [activeCfg, tgConfig]);
 
   // §6 — Alertas Telegram fase II: entry hit / SL hit / TP hit
   // Dispara cada vez que cambian los precios (cada ~15s según useMarketData)
@@ -399,10 +402,10 @@ export default function App() {
         {tab === "calc"      && <RiskCalc accounts={accounts} leverageOpts={leverageOpts} prices={prices} rValues={rValues} sendTg={sendTg}/>}
         {tab === "market"    && <MarketTab watchlist={watchlist} setWatchlist={setWL} prices={prices} loading={loading} refresh={refresh} proxyOk={proxyOk} toast={toast}/>}
         {tab === "debts"     && <DebtPlan rValues={rValues} accounts={accounts}/>}
-        {tab === "trade"     && <TradeTab onAdd={addClosed} accounts={accounts} openPositions={openPositions} setOpenPositions={setOP} leverageOpts={leverageOpts} callOpts={callOpts} toast={toast} prices={prices} sendTg={sendTg} dbConfig={dbConfig}/>}
-        {tab === "gastos"    && <GastosTab dbConfig={dbConfig} toast={toast}/>}
+        {tab === "trade"     && <TradeTab onAdd={addClosed} accounts={accounts} openPositions={openPositions} setOpenPositions={setOP} leverageOpts={leverageOpts} callOpts={callOpts} toast={toast} prices={prices} sendTg={sendTg} dbConfig={activeCfg}/>}
+        {tab === "gastos"    && <GastosTab dbConfig={activeCfg} toast={toast}/>}
         {tab === "accounts"  && <AccountsTab accounts={accounts} setAccounts={setAccounts} toast={toast}/>}
-        {tab === "maint"     && <MaintainersTab accounts={accounts} leverageOpts={leverageOpts} setLeverageOpts={setLev} callOpts={callOpts} setCallOpts={setCallOpts} rValues={rValues} setRValues={setRV} sheetsConfig={sheetsConfig} setSheetsConfig={setSC} dbConfig={dbConfig} setDbConfig={setDBC} tgConfig={tgConfig} setTgConfig={setTgConfig} toast={toast}/>}
+        {tab === "maint"     && <MaintainersTab accounts={accounts} leverageOpts={leverageOpts} setLeverageOpts={setLev} callOpts={callOpts} setCallOpts={setCallOpts} rValues={rValues} setRValues={setRV} sheetsConfig={sheetsConfig} setSheetsConfig={setSC} dbConfig={dbConfig} setDbConfig={setDBC} dbConfigSupabase={dbConfigSupabase} setDbConfigSupabase={setDBS} dbActive={dbActive} setDbActive={setDbActive} tgConfig={tgConfig} setTgConfig={setTgConfig} toast={toast}/>}
       </div>
     </>
   );

@@ -9,10 +9,9 @@ Los resúmenes de cambios van en `changelog.md`, no acá.
 
 1. **Al iniciar:** Leer este archivo + `comentarios.md`.
    Revisar backlog activo antes de ejecutar cualquier tarea.
-   **Credenciales:** La clave de la BD está en `comentarios.md` solo para uso en sesión.
    **NUNCA guardar credenciales en ningún archivo del proyecto (ni aquí, ni código, ni changelog).**
-2. **Al finalizar:** Agregar entrada en `changelog.md` + marcar ✅ 
-   en `comentarios.md` + **ejecutar deploy completo a GitHub** + enviar resumen en el chat.
+2. **Al completar cada ítem de feedback:** Marcar ✅ inmediatamente en `comentarios.md` (no esperar al final de sesión).
+   **Al finalizar:** Agregar entrada en `changelog.md` + verificar que todos los ítems completados tengan ✅ en `comentarios.md` + **ejecutar deploy completo a GitHub** + enviar resumen en el chat.
 3. **Deploy obligatorio a GitHub (nunca saltar):**
    - `git status` (para verificar)
    - `git add .`
@@ -91,7 +90,9 @@ src/
 25. **Call dropdown no muestra valor actual** → Si el trade tiene `source` que no está en `callOpts` (ej: "Binance Position Sync"), el select debe renderizar la opción actual como primera opción condicional: `{vals.source && !callOpts.includes(vals.source) && <option value={vals.source}>{vals.source}</option>}`.
 26. **position:relative en th de tabla** → Algunos navegadores ignoran `position:relative` en `<th>`. Usar un `<div style={{position:"relative",display:"inline-block"}}>` wrapper dentro del th para posicionar dropdowns correctamente.
 27. **SL/TP -4120 — migración obligatoria a Algo Order API** → Desde nov-2025, Binance migró STOP_MARKET/TAKE_PROFIT_MARKET al endpoint `fapi/v1/algoOrder`. El endpoint `fapi/v1/order` devuelve -4120 para estas órdenes en TODAS las cuentas. Fix: usar `POST /api/binance/futures/algoOrder` con `algoType=CONDITIONAL`, `triggerPrice` (no `stopPrice`), y `closePosition=true` (lowercase). Ref: https://github.com/freqtrade/freqtrade/issues/12610
-28. **Reconciliación BN: side y commission** → `t.buyer` en `userTrades` es `true` cuando la orden es BUY. En un closing trade, BUY = cerrar SHORT → tipo "Short". SELL = cerrar LONG → tipo "Long". La comisión puede estar en BNB (`commissionAsset`); solo restar al PnL si `commissionAsset === "USDT"`, de lo contrario el importe está en BNB y se restaría mal.
+28. **Reconciliación BN: side, commission y funding** → `t.buyer=true` en apertura = LONG; en cierre = cerrando SHORT. PnL completo = Closing PnL + Opening Fee + Closing Fees + Funding Fee. Usar comisión directa de `f.commission` cuando `commissionAsset=USDT` (más fiable que income API). Opening fee se suma al crear `curPos`. Funding fees filtradas por timestamp `openTime–closeTime`.
+29. **Reconciliación BN: isClose por dirección** → `Math.abs(realizedPnl) > 0.0001` falla en trades breakeven. Fix: si hay `curPos` activo, usar dirección del fill (`Long+SELL=cierre`, `Short+BUY=cierre`). Fallback a realizedPnl solo cuando `curPos=null` (cierres huérfanos).
+30. **Reconciliación BN: auto-USDT** → `normalizeSymbol()` en TradeTab: si el símbolo no termina en USDT/BUSD/BTC/ETH/BNB, agregar "USDT". Permite tipear "BTC" en lugar de "BTCUSDT".
 
 ---
 

@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(PGPASSWORD=\"6505.BjF\" psql:*)"
+      "Bash(PGPASSWORD=\"6505.BjF\" psql:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:developers.binance.com)"
     ]
   }
 }

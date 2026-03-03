@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { PROXY, DEFAULT_LEV } from "../constants";
 
-export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts, callOpts, setCallOpts, rValues, setRValues, sheetsConfig, setSheetsConfig, dbConfig, setDbConfig, tgConfig, setTgConfig, toast }) {
+export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts, callOpts, setCallOpts, rValues, setRValues, sheetsConfig, setSheetsConfig, dbConfig, setDbConfig, dbConfigSupabase, setDbConfigSupabase, dbActive, setDbActive, tgConfig, setTgConfig, toast }) {
   const [newLev, setNewLev] = useState("");
   const [newCall, setNewCall] = useState("");
   const [tab, setTab] = useState("r");
@@ -235,38 +235,87 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
       {/* DATABASE */}
       {tab === "db" && (
         <div>
-          <div className="al ai" style={{ fontSize:10, marginBottom:10 }}>
-            <strong>Local:</strong> <code style={{ background:"#111d2c", padding:"1px 5px", borderRadius:3 }}>brew install postgresql@16 && brew services start postgresql@16</code><br/>
-            <strong>Cloud (Supabase):</strong> crear proyecto en supabase.com → Project Settings → Database → Connection string
-          </div>
-          <div className="card">
-            <div className="ct">Conexión PostgreSQL</div>
-            <div className="g2">
-              <div className="fi"><label>Host</label><input placeholder="localhost" value={dbConfig.host||""} onChange={e => setDbConfig(p => ({ ...p, host:e.target.value }))}/></div>
-              <div className="fi"><label>Puerto</label><input placeholder="5432" value={dbConfig.port||""} onChange={e => setDbConfig(p => ({ ...p, port:e.target.value }))}/></div>
-              <div className="fi"><label>Base de datos</label><input placeholder="trading_fw" value={dbConfig.database||""} onChange={e => setDbConfig(p => ({ ...p, database:e.target.value }))}/></div>
-              <div className="fi"><label>Usuario</label><input placeholder="postgres" value={dbConfig.user||""} onChange={e => setDbConfig(p => ({ ...p, user:e.target.value }))}/></div>
-            </div>
-            <div className="fi"><label>Contraseña</label><input type="password" placeholder="(vacío si no tiene)" value={dbConfig.password||""} onChange={e => setDbConfig(p => ({ ...p, password:e.target.value }))}/></div>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
-              <input type="checkbox" id="dbSsl" checked={!!dbConfig.ssl} onChange={e => setDbConfig(p => ({ ...p, ssl: e.target.checked }))} style={{ width:14, height:14, cursor:"pointer" }}/>
-              <label htmlFor="dbSsl" style={{ fontSize:10, color:"#94a3b8", cursor:"pointer", margin:0 }}>
-                SSL / Base de datos cloud (Supabase, Neon, Railway, etc.)
-              </label>
-            </div>
-            <button className="btn bp" onClick={async () => {
-              try {
-                const r = await fetch(`${PROXY}/api/db/query`, {
-                  method:"POST", headers:{"Content-Type":"application/json"},
-                  body: JSON.stringify({ config:dbConfig, sql:"SELECT NOW() as ts" })
-                });
-                const d = await r.json();
-                if (d.rows) toast.success("DB conectada", `PostgreSQL OK — ${d.rows[0]?.ts}`);
-                else toast.error("DB error", d.error);
-              } catch(e) { toast.error("DB", e.message); }
-            }}>⚡ Test conexión</button>
+          {/* Selector BD activa */}
+          <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:12, padding:"8px 12px", background:"#0f1923", borderRadius:6, border:"1px solid #1e3048" }}>
+            <span style={{ fontSize:11, color:"#94a3b8", fontWeight:600 }}>BD activa:</span>
+            <button
+              className={`btn bsm ${dbActive === "local" ? "bp" : "bg"}`}
+              onClick={() => setDbActive("local")}
+            >🖥 Local</button>
+            <button
+              className={`btn bsm ${dbActive === "supabase" ? "bp" : "bg"}`}
+              onClick={() => setDbActive("supabase")}
+            >☁️ Supabase</button>
+            <span style={{ fontSize:10, color: dbActive === "supabase" ? "#38bdf8" : "#22c55e", marginLeft:4 }}>
+              {dbActive === "local" ? "← usando PostgreSQL local" : "← usando Supabase cloud"}
+            </span>
           </div>
 
+          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10 }}>
+
+            {/* Panel Local */}
+            <div className="card" style={{ opacity: dbActive === "local" ? 1 : 0.55 }}>
+              <div className="ct">🖥 PostgreSQL Local {dbActive === "local" && <span style={{ color:"#22c55e", fontSize:9, marginLeft:6 }}>● ACTIVA</span>}</div>
+              <div className="al ai" style={{ fontSize:9, marginBottom:8 }}>
+                <code style={{ background:"#111d2c", padding:"1px 4px", borderRadius:3 }}>brew install postgresql@16 && brew services start postgresql@16</code>
+              </div>
+              <div className="g2">
+                <div className="fi"><label>Host</label><input placeholder="localhost" value={dbConfig.host||""} onChange={e => setDbConfig(p => ({ ...p, host:e.target.value }))}/></div>
+                <div className="fi"><label>Puerto</label><input placeholder="5432" value={dbConfig.port||""} onChange={e => setDbConfig(p => ({ ...p, port:e.target.value }))}/></div>
+                <div className="fi"><label>Base de datos</label><input placeholder="trading_fw" value={dbConfig.database||""} onChange={e => setDbConfig(p => ({ ...p, database:e.target.value }))}/></div>
+                <div className="fi"><label>Usuario</label><input placeholder="postgres" value={dbConfig.user||""} onChange={e => setDbConfig(p => ({ ...p, user:e.target.value }))}/></div>
+              </div>
+              <div className="fi"><label>Contraseña</label><input type="password" placeholder="(vacío si no tiene)" value={dbConfig.password||""} onChange={e => setDbConfig(p => ({ ...p, password:e.target.value }))}/></div>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
+                <input type="checkbox" id="dbSslLocal" checked={!!dbConfig.ssl} onChange={e => setDbConfig(p => ({ ...p, ssl: e.target.checked }))} style={{ width:14, height:14, cursor:"pointer" }}/>
+                <label htmlFor="dbSslLocal" style={{ fontSize:10, color:"#94a3b8", cursor:"pointer", margin:0 }}>SSL</label>
+              </div>
+              <button className="btn bp bsm" style={{ marginTop:8 }} onClick={async () => {
+                try {
+                  const r = await fetch(`${PROXY}/api/db/query`, {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body: JSON.stringify({ config:dbConfig, sql:"SELECT NOW() as ts" })
+                  });
+                  const d = await r.json();
+                  if (d.rows) toast.success("Local OK", `PostgreSQL — ${d.rows[0]?.ts}`);
+                  else toast.error("Local error", d.error);
+                } catch(e) { toast.error("Local", e.message); }
+              }}>⚡ Test local</button>
+            </div>
+
+            {/* Panel Supabase */}
+            <div className="card" style={{ opacity: dbActive === "supabase" ? 1 : 0.55 }}>
+              <div className="ct">☁️ Supabase {dbActive === "supabase" && <span style={{ color:"#38bdf8", fontSize:9, marginLeft:6 }}>● ACTIVA</span>}</div>
+              <div className="al ai" style={{ fontSize:9, marginBottom:8 }}>
+                supabase.com → Project Settings → Database → <strong>Connection parameters</strong> (no la connection string)<br/>
+                Puerto <strong>5432</strong> = sesión directa · Puerto <strong>6543</strong> = pooler (recomendado)
+              </div>
+              <div className="g2">
+                <div className="fi"><label>Host</label><input placeholder="db.xxxx.supabase.co" value={dbConfigSupabase.host||""} onChange={e => setDbConfigSupabase(p => ({ ...p, host:e.target.value }))}/></div>
+                <div className="fi"><label>Puerto</label><input placeholder="5432" value={dbConfigSupabase.port||""} onChange={e => setDbConfigSupabase(p => ({ ...p, port:e.target.value }))}/></div>
+                <div className="fi"><label>Base de datos</label><input placeholder="postgres" value={dbConfigSupabase.database||""} onChange={e => setDbConfigSupabase(p => ({ ...p, database:e.target.value }))}/></div>
+                <div className="fi"><label>Usuario</label><input placeholder="postgres" value={dbConfigSupabase.user||""} onChange={e => setDbConfigSupabase(p => ({ ...p, user:e.target.value }))}/></div>
+              </div>
+              <div className="fi"><label>Contraseña</label><input type="password" placeholder="tu password de Supabase" value={dbConfigSupabase.password||""} onChange={e => setDbConfigSupabase(p => ({ ...p, password:e.target.value }))}/></div>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginTop:6 }}>
+                <input type="checkbox" id="dbSslSupa" checked={!!dbConfigSupabase.ssl} onChange={e => setDbConfigSupabase(p => ({ ...p, ssl: e.target.checked }))} style={{ width:14, height:14, cursor:"pointer" }}/>
+                <label htmlFor="dbSslSupa" style={{ fontSize:10, color:"#94a3b8", cursor:"pointer", margin:0 }}>SSL (obligatorio en Supabase)</label>
+              </div>
+              <button className="btn bp bsm" style={{ marginTop:8 }} onClick={async () => {
+                if (!dbConfigSupabase.host || !dbConfigSupabase.password) { toast.error("Supabase", "Completá host y contraseña"); return; }
+                try {
+                  const r = await fetch(`${PROXY}/api/db/query`, {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body: JSON.stringify({ config:dbConfigSupabase, sql:"SELECT NOW() as ts" })
+                  });
+                  const d = await r.json();
+                  if (d.rows) toast.success("Supabase OK ☁️", `Conectado — ${d.rows[0]?.ts}`);
+                  else toast.error("Supabase error", d.error);
+                } catch(e) { toast.error("Supabase", e.message); }
+              }}>⚡ Test Supabase</button>
+            </div>
+
+          </div>
         </div>
       )}
 

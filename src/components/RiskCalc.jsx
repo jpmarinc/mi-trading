@@ -14,7 +14,7 @@ export default function RiskCalc({ accounts, leverageOpts, prices, rValues, send
     const lev    = parseFloat(f.leverage);
     const symbol = f.asset.toUpperCase().replace("-","") + (f.asset.toUpperCase().endsWith("USDT") ? "" : "USDT");
     // res.ps = margen (risk / slPct / leverage). Notional = ps * leverage. Qty = notional / entry
-    const qty = Math.floor((res.ps * lev / entry) * 1000) / 1000;
+    const qty = parseFloat((res.ps * lev / entry).toFixed(8));
     if (qty < 0.001) {
       setBnStatus({ ok:false, msg:`Qty calculada: ${(res.ps * lev / entry).toFixed(6)} (< mínimo 0.001). Aumentá el R o revisá el SL.` });
       return;
