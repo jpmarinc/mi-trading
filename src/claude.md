@@ -94,6 +94,7 @@ src/
 29. **Reconciliación BN: isClose por dirección** → `Math.abs(realizedPnl) > 0.0001` falla en trades breakeven. Fix: si hay `curPos` activo, usar dirección del fill (`Long+SELL=cierre`, `Short+BUY=cierre`). Fallback a realizedPnl solo cuando `curPos=null` (cierres huérfanos).
 30. **Reconciliación BN: auto-USDT** → `normalizeSymbol()` en TradeTab: si el símbolo no termina en USDT/BUSD/BTC/ETH/BNB, agregar "USDT". Permite tipear "BTC" en lugar de "BTCUSDT".
 31. **getBnFuturesFilters usaba symbols[0]** → `fapi/v1/exchangeInfo?symbol=X` devuelve TODOS los símbolos (686), no filtra. `d.symbols[0]` siempre era BTCUSDT. Fix: `d.symbols.find(s => s.symbol === symbol)`. Tokens baratos (ASTER, VIRTUAL) tienen stepSize="1"; sin el find, se aplicaban filtros de BTC (stepSize=0.001) causando -1111.
+32. **⚠️ CRÍTICO — algoOrder SL/TP NUNCA debe fallar si no hay filtros** → `/api/binance/futures/algoOrder` DEBE mantener fallback: `filters ? roundToStep(triggerPrice, tickSize) : parseFloat(triggerPrice)`. Si getBnFuturesFilters falla (timeout, red), el SL/TP se coloca con precio sin redondear — aceptable. Bloquear el endpoint si no hay filtros deja posiciones abiertas SIN SL/TP, lo cual es crítico para el capital. El endpoint `/api/binance/futures/order` (orden principal) SÍ puede fallar-fast porque la precisión de qty es obligatoria ahí.
 
 ---
 
