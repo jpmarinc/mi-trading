@@ -93,6 +93,7 @@ src/
 28. **Reconciliación BN: side, commission y funding** → `t.buyer=true` en apertura = LONG; en cierre = cerrando SHORT. PnL completo = Closing PnL + Opening Fee + Closing Fees + Funding Fee. Usar comisión directa de `f.commission` cuando `commissionAsset=USDT` (más fiable que income API). Opening fee se suma al crear `curPos`. Funding fees filtradas por timestamp `openTime–closeTime`.
 29. **Reconciliación BN: isClose por dirección** → `Math.abs(realizedPnl) > 0.0001` falla en trades breakeven. Fix: si hay `curPos` activo, usar dirección del fill (`Long+SELL=cierre`, `Short+BUY=cierre`). Fallback a realizedPnl solo cuando `curPos=null` (cierres huérfanos).
 30. **Reconciliación BN: auto-USDT** → `normalizeSymbol()` en TradeTab: si el símbolo no termina en USDT/BUSD/BTC/ETH/BNB, agregar "USDT". Permite tipear "BTC" en lugar de "BTCUSDT".
+31. **getBnFuturesFilters usaba symbols[0]** → `fapi/v1/exchangeInfo?symbol=X` devuelve TODOS los símbolos (686), no filtra. `d.symbols[0]` siempre era BTCUSDT. Fix: `d.symbols.find(s => s.symbol === symbol)`. Tokens baratos (ASTER, VIRTUAL) tienen stepSize="1"; sin el find, se aplicaban filtros de BTC (stepSize=0.001) causando -1111.
 
 ---
 

@@ -153,8 +153,8 @@ async function getBnFuturesFilters(symbol, attempt = 0) {
   try {
     const r = await pf(`https://fapi.binance.com/fapi/v1/exchangeInfo?symbol=${symbol}`);
     const d = await r.json();
-    const sym = d.symbols?.[0];
-    if (!sym) throw new Error("symbol not found in exchangeInfo");
+    const sym = d.symbols?.find(s => s.symbol === symbol);
+    if (!sym) throw new Error(`symbol ${symbol} not found in exchangeInfo`);
     const lot   = sym.filters.find(f => f.filterType === "LOT_SIZE");
     const price = sym.filters.find(f => f.filterType === "PRICE_FILTER");
     const result = { stepSize: lot?.stepSize || "0.001", tickSize: price?.tickSize || "0.01" };
