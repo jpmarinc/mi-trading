@@ -138,7 +138,9 @@ function roundToStep(value, step) {
   if (!step || parseFloat(step) === 0) return value;
   const precision = (step.split(".")[1] || "").replace(/0+$/, "").length;
   const factor = parseFloat(step);
-  return parseFloat((Math.floor(value / factor) * factor).toFixed(precision));
+  // toFixed(10) en la división evita que floating point dé 801281.9999... en vez de 801282
+  const steps = Math.floor(parseFloat((value / factor).toFixed(10)));
+  return parseFloat((steps * factor).toFixed(precision));
 }
 
 // Cache de filtros por símbolo — evita llamada extra en cada orden
