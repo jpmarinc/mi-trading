@@ -133,6 +133,8 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
   const [dbPageSize, setDbPageSize] = useState(20);
   const [dbLoading, setDbLoading]   = useState(false);
   const [dbEditId, setDbEditId]     = useState(null);
+  const [dbMigrating, setDbMigrating] = useState(false);
+  const [closedTrades] = usePersist("closedTrades", []);
 
   // Filtros de columna para BD Historial
   const [filters, setFilters] = useState({ asset: new Set(), type: new Set(), outcome: new Set(), account: new Set(), source: new Set() });
@@ -247,6 +249,32 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
       if (d.ok) { loadDbTrades(); toast.success("Eliminado", `Trade #${id} borrado`); }
       else toast.error("BD", d.error);
     } catch(e) { toast.error("BD", e.message); }
+  };
+
+  const migrateLocalTrades = async () => {
+    if (!closedTrades.length) { toast.error("Migrar", "No hay trades en localStorage para migrar"); return; }
+    if (!dbConfig?.host || !dbConfig?.database) { toast.error("BD", "Configurá la conexión en Maintainers → Base de Datos"); return; }
+    setDbMigrating(true);
+    try {
+      // 1. Asegurar schema actualizado (idempotente)
+      await fetch(`${PROXY}/api/db/migrate-schema`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ config: dbConfig })
+      });
+      // 2. Migrar trades
+      const r = await fetch(`${PROXY}/api/db/migrate-trades`, {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ config: dbConfig, trades: closedTrades })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        toast.success("Migración OK", `${d.inserted} insertados de ${d.total} trades`);
+        loadDbTrades();
+      } else {
+        toast.error("Migrar", d.error);
+      }
+    } catch(e) { toast.error("Migrar", e.message); }
+    setDbMigrating(false);
   };
 
   useEffect(() => {
@@ -779,12 +807,16 @@ export default function TradeTab({ onAdd, accounts, openPositions, setOpenPositi
               <button className="btn bp bxs" onClick={loadDbTrades} disabled={dbLoading}>
                 {dbLoading ? "⟳ Cargando..." : "🔄 Cargar"}
               </button>
+              <button className="btn bg bxs" onClick={migrateLocalTrades} disabled={dbMigrating || dbLoading}
+                title={`Migrar ${closedTrades.length} trades de localStorage a la BD`}>
+                {dbMigrating ? "⟳ Migrando..." : `📥 Migrar local (${closedTrades.length})`}
+              </button>
             </div>
           </div>
           {!dbTrades.length && !dbLoading && (
             <div style={{ textAlign:"center", color:"#4a6280", padding:"24px 0", fontSize:11 }}>
               Sin datos — hacé clic en "Cargar".<br/>
-              Si no hay datos, usá <strong>Maintainers → BD → Migrar</strong>.
+              Si tenés trades en localStorage, usá <strong>"Migrar local"</strong> para subirlos a la BD.
             </div>
           )}
           {dbTrades.length > 0 && (
