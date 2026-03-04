@@ -1124,6 +1124,193 @@ app.post("/api/db/clear-bn-trades", async (req, res) => {
   finally { client.release(); }
 });
 
+// ── DB: migrar todo de local a cloud (Supabase) ───────────────────────────────
+// POST /api/db/migrate-to-cloud  { localConfig, cloudConfig }
+// Copia trades, gastos, gasto_categorias, gasto_config de local → cloud
+// Usa ON CONFLICT DO NOTHING para no duplicar. IDs serial se omiten (cloud asigna nuevos).
+app.post("/api/db/migrate-to-cloud", async (req, res) => {
+  const { localConfig, cloudConfig } = req.body;
+  const { Pool } = require("pg");
+  const localPool = new Pool(sanitizePgCfg(localConfig));
+  const cloudPool = new Pool(sanitizePgCfg(cloudConfig));
+  const results = {};
+  try {
+    // ── trades ──────────────────────────────────────────────────────────────
+    const trades = (await localPool.query("SELECT * FROM trades WHERE deleted_at IS NULL")).rows;
+    let tIns = 0;
+    for (const t of trades) {
+      try {
+        const r = await cloudPool.query(
+          `INSERT INTO trades (local_id,bn_order_id,date,asset,type,account,entry,sl,tp,leverage,order_type,outcome,pnl,pnl_r,source,reasoning,anomaly,closed_at,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+           ON CONFLICT (local_id) DO NOTHING`,
+          [t.local_id,t.bn_order_id,t.date,t.asset,t.type,t.account,t.entry,t.sl,t.tp,
+           t.leverage,t.order_type,t.outcome,t.pnl,t.pnl_r,t.source,t.reasoning,t.anomaly,
+           t.closed_at,t.created_at]
+        );
+        if (r.rowCount > 0) tIns++;
+        else if (!t.local_id && t.bn_order_id) {
+          // fallback: dedup por bn_order_id para trades de Binance sin local_id
+          const r2 = await cloudPool.query(
+            `INSERT INTO trades (local_id,bn_order_id,date,asset,type,account,entry,sl,tp,leverage,order_type,outcome,pnl,pnl_r,source,reasoning,anomaly,closed_at,created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             ON CONFLICT (bn_order_id) DO NOTHING`,
+            [t.local_id,t.bn_order_id,t.date,t.asset,t.type,t.account,t.entry,t.sl,t.tp,
+             t.leverage,t.order_type,t.outcome,t.pnl,t.pnl_r,t.source,t.reasoning,t.anomaly,
+             t.closed_at,t.created_at]
+          );
+          if (r2.rowCount > 0) tIns++;
+        }
+      } catch { /* skip row on error */ }
+    }
+    results.trades = { total: trades.length, inserted: tIns };
+
+    // ── gasto_categorias ─────────────────────────────────────────────────────
+    const cats = (await localPool.query("SELECT nombre, icono, orden FROM gasto_categorias")).rows;
+    let cIns = 0;
+    for (const c of cats) {
+      try {
+        const r = await cloudPool.query(
+          `INSERT INTO gasto_categorias (nombre,icono,orden) VALUES ($1,$2,$3) ON CONFLICT (nombre) DO NOTHING`,
+          [c.nombre, c.icono, c.orden]
+        );
+        if (r.rowCount > 0) cIns++;
+      } catch { /* skip */ }
+    }
+    results.gasto_categorias = { total: cats.length, inserted: cIns };
+
+    // ── gasto_config ─────────────────────────────────────────────────────────
+    const cfgs = (await localPool.query("SELECT tipo, nombre, orden FROM gasto_config")).rows;
+    let cfgIns = 0;
+    for (const c of cfgs) {
+      try {
+        const r = await cloudPool.query(
+          `INSERT INTO gasto_config (tipo,nombre,orden) VALUES ($1,$2,$3) ON CONFLICT (tipo,nombre) DO NOTHING`,
+          [c.tipo, c.nombre, c.orden]
+        );
+        if (r.rowCount > 0) cfgIns++;
+      } catch { /* skip */ }
+    }
+    results.gasto_config = { total: cfgs.length, inserted: cfgIns };
+
+    // ── gastos ───────────────────────────────────────────────────────────────
+    const gastos = (await localPool.query("SELECT * FROM gastos WHERE deleted_at IS NULL ORDER BY fecha, created_at")).rows;
+    let gIns = 0;
+    for (const g of gastos) {
+      try {
+        await cloudPool.query(
+          `INSERT INTO gastos (fecha,importe,moneda,concepto,entidad,nombre_producto,tipo_movimiento,categoria,nota,usd_equiv,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [g.fecha,g.importe,g.moneda,g.concepto,g.entidad,g.nombre_producto,
+           g.tipo_movimiento,g.categoria,g.nota,g.usd_equiv,g.created_at]
+        );
+        gIns++;
+      } catch { /* skip */ }
+    }
+    results.gastos = { total: gastos.length, inserted: gIns };
+
+    res.json({ ok: true, results });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    await localPool.end().catch(() => {});
+    await cloudPool.end().catch(() => {});
+  }
+});
+
+// ── DB: backup cloud → local ──────────────────────────────────────────────────
+// POST /api/db/backup-from-cloud  { localConfig, cloudConfig }
+// Copia trades, gastos, gasto_categorias, gasto_config de Supabase → local
+// Mismo mecanismo que migrate-to-cloud pero en sentido inverso.
+app.post("/api/db/backup-from-cloud", async (req, res) => {
+  const { localConfig, cloudConfig } = req.body;
+  const { Pool } = require("pg");
+  const localPool = new Pool(sanitizePgCfg(localConfig));
+  const cloudPool = new Pool(sanitizePgCfg(cloudConfig));
+  const results = {};
+  try {
+    // ── trades ──────────────────────────────────────────────────────────────
+    const trades = (await cloudPool.query("SELECT * FROM trades WHERE deleted_at IS NULL")).rows;
+    let tIns = 0;
+    for (const t of trades) {
+      try {
+        const r = await localPool.query(
+          `INSERT INTO trades (local_id,bn_order_id,date,asset,type,account,entry,sl,tp,leverage,order_type,outcome,pnl,pnl_r,source,reasoning,anomaly,closed_at,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+           ON CONFLICT (local_id) DO NOTHING`,
+          [t.local_id,t.bn_order_id,t.date,t.asset,t.type,t.account,t.entry,t.sl,t.tp,
+           t.leverage,t.order_type,t.outcome,t.pnl,t.pnl_r,t.source,t.reasoning,t.anomaly,
+           t.closed_at,t.created_at]
+        );
+        if (r.rowCount > 0) tIns++;
+        else if (!t.local_id && t.bn_order_id) {
+          const r2 = await localPool.query(
+            `INSERT INTO trades (local_id,bn_order_id,date,asset,type,account,entry,sl,tp,leverage,order_type,outcome,pnl,pnl_r,source,reasoning,anomaly,closed_at,created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+             ON CONFLICT (bn_order_id) DO NOTHING`,
+            [t.local_id,t.bn_order_id,t.date,t.asset,t.type,t.account,t.entry,t.sl,t.tp,
+             t.leverage,t.order_type,t.outcome,t.pnl,t.pnl_r,t.source,t.reasoning,t.anomaly,
+             t.closed_at,t.created_at]
+          );
+          if (r2.rowCount > 0) tIns++;
+        }
+      } catch { /* skip */ }
+    }
+    results.trades = { total: trades.length, inserted: tIns };
+
+    // ── gasto_categorias ─────────────────────────────────────────────────────
+    const cats = (await cloudPool.query("SELECT nombre, icono, orden FROM gasto_categorias")).rows;
+    let cIns = 0;
+    for (const c of cats) {
+      try {
+        const r = await localPool.query(
+          `INSERT INTO gasto_categorias (nombre,icono,orden) VALUES ($1,$2,$3) ON CONFLICT (nombre) DO NOTHING`,
+          [c.nombre, c.icono, c.orden]
+        );
+        if (r.rowCount > 0) cIns++;
+      } catch { /* skip */ }
+    }
+    results.gasto_categorias = { total: cats.length, inserted: cIns };
+
+    // ── gasto_config ─────────────────────────────────────────────────────────
+    const cfgs = (await cloudPool.query("SELECT tipo, nombre, orden FROM gasto_config")).rows;
+    let cfgIns = 0;
+    for (const c of cfgs) {
+      try {
+        const r = await localPool.query(
+          `INSERT INTO gasto_config (tipo,nombre,orden) VALUES ($1,$2,$3) ON CONFLICT (tipo,nombre) DO NOTHING`,
+          [c.tipo, c.nombre, c.orden]
+        );
+        if (r.rowCount > 0) cfgIns++;
+      } catch { /* skip */ }
+    }
+    results.gasto_config = { total: cfgs.length, inserted: cfgIns };
+
+    // ── gastos ───────────────────────────────────────────────────────────────
+    const gastos = (await cloudPool.query("SELECT * FROM gastos WHERE deleted_at IS NULL ORDER BY fecha, created_at")).rows;
+    let gIns = 0;
+    for (const g of gastos) {
+      try {
+        await localPool.query(
+          `INSERT INTO gastos (fecha,importe,moneda,concepto,entidad,nombre_producto,tipo_movimiento,categoria,nota,usd_equiv,created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+          [g.fecha,g.importe,g.moneda,g.concepto,g.entidad,g.nombre_producto,
+           g.tipo_movimiento,g.categoria,g.nota,g.usd_equiv,g.created_at]
+        );
+        gIns++;
+      } catch { /* skip */ }
+    }
+    results.gastos = { total: gastos.length, inserted: gIns };
+
+    res.json({ ok: true, results });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    await localPool.end().catch(() => {});
+    await cloudPool.end().catch(() => {});
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // MÓDULO GASTOS
 // ═══════════════════════════════════════════════════════════════════════════════

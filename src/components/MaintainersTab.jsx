@@ -316,6 +316,58 @@ export default function MaintainersTab({ accounts, leverageOpts, setLeverageOpts
             </div>
 
           </div>
+
+          {/* Migración Local → Supabase */}
+          {dbConfig?.host && dbConfigSupabase?.host && dbConfigSupabase?.password && (
+            <div className="card" style={{ marginTop:12, borderColor:"#1e4a3a" }}>
+              <div className="ct">🚀 Migrar Local → Supabase</div>
+              <div style={{ fontSize:10, color:"#94a3b8", marginBottom:8 }}>
+                Copia trades, gastos, categorías y config desde PostgreSQL local a Supabase.<br/>
+                Usa deduplicación — podés correrlo varias veces sin duplicar datos.
+              </div>
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                <button className="btn bsm" style={{ background:"#0d3a2a", border:"1px solid #22c55e", color:"#22c55e" }}
+                  onClick={async () => {
+                    if (!dbConfig.host) { toast.error("Migrar", "Configurá PostgreSQL local primero"); return; }
+                    if (!dbConfigSupabase.host || !dbConfigSupabase.password) { toast.error("Migrar", "Configurá Supabase primero"); return; }
+                    toast.success("Migrando…", "Esto puede tardar unos segundos");
+                    try {
+                      const r = await fetch(`${PROXY}/api/db/migrate-to-cloud`, {
+                        method:"POST", headers:{"Content-Type":"application/json"},
+                        body: JSON.stringify({ localConfig: dbConfig, cloudConfig: dbConfigSupabase })
+                      });
+                      const d = await r.json();
+                      if (d.ok) {
+                        const { trades, gastos, gasto_categorias, gasto_config } = d.results;
+                        toast.success("Migración OK ✅", `Trades: ${trades.inserted}/${trades.total} · Gastos: ${gastos.inserted}/${gastos.total} · Cats: ${gasto_categorias.inserted}/${gasto_categorias.total} · Config: ${gasto_config.inserted}/${gasto_config.total}`);
+                      } else { toast.error("Migrar", d.error); }
+                    } catch(e) { toast.error("Migrar", e.message); }
+                  }}>
+                  ☁️ Migrar Local → Supabase
+                </button>
+                <button className="btn bsm" style={{ background:"#0d1f3a", border:"1px solid #38bdf8", color:"#38bdf8" }}
+                  onClick={async () => {
+                    if (!dbConfig.host) { toast.error("Backup", "Configurá PostgreSQL local primero"); return; }
+                    if (!dbConfigSupabase.host || !dbConfigSupabase.password) { toast.error("Backup", "Configurá Supabase primero"); return; }
+                    toast.success("Respaldando…", "Copiando Supabase → local");
+                    try {
+                      const r = await fetch(`${PROXY}/api/db/backup-from-cloud`, {
+                        method:"POST", headers:{"Content-Type":"application/json"},
+                        body: JSON.stringify({ localConfig: dbConfig, cloudConfig: dbConfigSupabase })
+                      });
+                      const d = await r.json();
+                      if (d.ok) {
+                        const { trades, gastos, gasto_categorias, gasto_config } = d.results;
+                        toast.success("Backup OK 💾", `Trades: ${trades.inserted}/${trades.total} · Gastos: ${gastos.inserted}/${gastos.total} · Cats: ${gasto_categorias.inserted}/${gasto_categorias.total} · Config: ${gasto_config.inserted}/${gasto_config.total}`);
+                      } else { toast.error("Backup", d.error); }
+                    } catch(e) { toast.error("Backup", e.message); }
+                  }}>
+                  💾 Backup Supabase → Local
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       )}
 
