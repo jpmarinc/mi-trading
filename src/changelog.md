@@ -4,6 +4,44 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-04 — Sesión 15
+
+### Fix BD local + Setup Supabase completo + Migración bidireccional
+
+**Fix crítico — BD local apuntaba a database `postgres` en vez de `trading_fw`**
+- Root cause: el campo "Base de datos" en Maintainers → Local tenía `postgres` (default de Supabase) en vez de `trading_fw`. Resultado: `relation "trades" does not exist` aunque las tablas existían.
+- Fix: cambiar el campo a `trading_fw` en la UI. Sin cambios de código.
+- Patrón registrado: configuración de BD puede derivar si el usuario edita los campos manualmente.
+
+**Fix Supabase — Direct Connection no es IPv4 compatible**
+- Root cause: Direct Connection de Supabase (`db.xxx.supabase.co:5432`) requiere IPv4 add-on de pago. En redes domésticas IPv4 falla con `ENOTFOUND`.
+- Fix: usar **Session Pooler** en el modal Connect de Supabase (Method → Session pooler). Host cambia a `aws-0-xxx.pooler.supabase.com:5432`.
+- Supabase conectado y operativo como BD activa.
+
+**proxy.cjs — Migración bidireccional local ↔ Supabase**
+- Nuevo endpoint `POST /api/db/migrate-to-cloud { localConfig, cloudConfig }`: copia trades, gastos, gasto_categorias, gasto_config de PostgreSQL local → Supabase. Deduplicación por `local_id` / `bn_order_id` / `nombre` según tabla.
+- Nuevo endpoint `POST /api/db/backup-from-cloud { localConfig, cloudConfig }`: operación inversa, Supabase → local. Mismo mecanismo ON CONFLICT DO NOTHING.
+- Ambos endpoints crean pools independientes para cada BD sin afectar el pool cacheado de la app.
+
+**MaintainersTab.jsx — Botones de migración**
+- Nueva tarjeta "🚀 Migrar Local → Supabase" con dos botones: `☁️ Migrar Local → Supabase` y `💾 Backup Supabase → Local`.
+- Visible solo cuando ambas BDs están configuradas.
+- Toast de resultado muestra conteo por tabla: Trades X/Y · Gastos X/Y · Cats X/Y · Config X/Y.
+
+**TradeTab.jsx — Botón "Migrar local (N)"**
+- Agrega botón en modo "BD Historial" para subir closedTrades de localStorage a la BD activa.
+- Ejecuta migrate-schema (idempotente) antes del bulk insert.
+- Muestra conteo de trades disponibles en localStorage.
+
+**PostgreSQL local — trust auth para conexiones locales**
+- pg_hba.conf modificado: `local all all trust` para permitir conexiones sin password desde localhost.
+- Facilita operaciones de diagnóstico y migración desde scripts locales.
+
+### Data migrada
+- 166 trades · 11 gastos · 16 categorías · 10 config → Supabase
+
+---
+
 ## 2026-03-02 — Sesión 14
 
 ### Fix precisión Binance -1111 + Soporte dual BD (Local + Supabase)
