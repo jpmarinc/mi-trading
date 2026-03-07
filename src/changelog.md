@@ -4,6 +4,46 @@ Historial completo de cambios por sesión. Orden cronológico inverso (más reci
 
 ---
 
+## 2026-03-07 — Sesión 16
+
+### Fix BD Supabase + Sistema de memoria + Setup deploy Fly.io
+
+**proxy.cjs — Fix `search_path` Supabase (root cause: `relation "trades" does not exist`)**
+- `sanitizePgCfg`: agrega `options: "-c search_path=public"` cuando `isCloud=true`.
+- El Session Pooler de Supabase no incluye `public` en el search_path por defecto → todas las queries a tablas sin schema explícito fallaban con `relation does not exist`.
+- PORT ahora lee `process.env.PORT || 3001` (necesario para Fly.io).
+- CORS en producción: `true` (acepta cualquier origin desde el mismo servidor).
+- En producción (`NODE_ENV=production`): sirve `dist/` como archivos estáticos + SPA fallback.
+
+**constants/index.js — PROXY dinámico**
+- `PROXY = import.meta.env.VITE_PROXY_URL ?? ""` — en producción (Fly.io) usa mismo origen.
+- `.env.development`: `VITE_PROXY_URL=http://localhost:3001` para dev local.
+
+**Sistema de memoria — `src/memoria.md`**
+- Nuevo archivo con resumen de última sesión + historial de sesiones + arquitectura de deploy.
+- `CLAUDE.md`: regla actualizada para leer `memoria.md` al iniciar y actualizarla al finalizar.
+
+**Deploy Fly.io — archivos de infraestructura**
+- `Dockerfile`: Node 20-alpine, `npm ci`, `npm run build`, `npm prune --production`, `node src/proxy.cjs`.
+- `fly.toml`: app `mi-trading-fw`, región `gru` (São Paulo), 256MB RAM, `auto_stop=false` (no duerme).
+- `.dockerignore`: excluye `node_modules`, `dist`, `.env`, `comentarios.md`.
+- `package.json`: nuevo script `start:prod`.
+- `src/deploy-guide.md`: guía paso a paso para hacer el primer deploy y actualizaciones futuras.
+
+### Archivos modificados/creados
+- `src/proxy.cjs`
+- `src/constants/index.js`
+- `.env.development` (nuevo)
+- `Dockerfile` (nuevo)
+- `fly.toml` (nuevo)
+- `.dockerignore` (nuevo)
+- `package.json`
+- `src/memoria.md` (nuevo)
+- `src/CLAUDE.md`
+- `src/deploy-guide.md` (nuevo)
+
+---
+
 ## 2026-03-04 — Sesión 15
 
 ### Fix BD local + Setup Supabase completo + Migración bidireccional

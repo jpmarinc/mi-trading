@@ -14,10 +14,12 @@
 const express  = require("express");
 const cors     = require("cors");
 const crypto   = require("crypto"); // nativo Node.js, sin instalar
+const path     = require("path");
 const app      = express();
-const PORT     = 3001;
+const PORT     = process.env.PORT || 3001;
+const IS_PROD  = process.env.NODE_ENV === "production";
 
-app.use(cors({ origin: ["http://localhost:5173", "http://localhost:5174"] }));
+app.use(cors({ origin: IS_PROD ? true : ["http://localhost:5173", "http://localhost:5174"] }));
 app.use(express.json());
 
 // ── helper fetch con timeout ────────────────────────────────────────────────
@@ -714,7 +716,10 @@ function sanitizePgCfg(cfg) {
     cfg.host.includes("supabase") || cfg.host.includes("neon") ||
     cfg.host.includes("railway")  || cfg.host.includes("render")
   ));
-  if (isCloud) base.ssl = { rejectUnauthorized: false };
+  if (isCloud) {
+    base.ssl = { rejectUnauthorized: false };
+    base.options = "-c search_path=public"; // Supabase pooler requiere esto
+  }
   return base;
 }
 
@@ -1598,6 +1603,12 @@ app.get("/api/gastos/usd-rate", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// Servir React build en producción (Fly.io)
+if (IS_PROD) {
+  const distPath = path.join(__dirname, "..", "dist");
+  app.use(express.static(distPath));
+  app.get("*", (req, res) => res.sendFile(path.join(distPath, "index.html")));
+}
 
 app.listen(PORT, () => {
   console.log(`\n✅  Proxy v4 → http://localhost:${PORT}`);

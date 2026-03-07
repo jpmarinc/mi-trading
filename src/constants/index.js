@@ -1,5 +1,7 @@
 // §CONSTANTS — constantes globales
-export const PROXY = "http://localhost:3001";
+// En producción (Fly.io) el proxy y el frontend comparten origen → ""
+// En local dev → http://localhost:3001 (desde .env.development)
+export const PROXY = import.meta.env.VITE_PROXY_URL ?? "";
 
 const DEC31       = new Date("2026-12-31");
 export const months_left = Math.max(0, (DEC31.getFullYear()-new Date().getFullYear())*12+(DEC31.getMonth()-new Date().getMonth())+1);

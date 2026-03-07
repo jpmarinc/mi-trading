@@ -9,7 +9,8 @@
     "start": "concurrently \"npm run proxy\" \"npm run dev\"",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start:prod": "node src/proxy.cjs"
   },
   "dependencies": {
     "cors": "^2.8.6",
