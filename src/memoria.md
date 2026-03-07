@@ -7,24 +7,45 @@ Archivo de continuidad entre sesiones. Claude actualiza esto al finalizar cada s
 ## Ultima sesion: Sesion 16 — 2026-03-07
 
 ### Que hicimos
-1. Fix critico BD: `search_path=public` en `sanitizePgCfg()` para Supabase pooler → resuelve `relation "trades" does not exist`
-2. Sistema de memoria → este archivo, incluido en CLAUDE.md como lectura obligatoria al iniciar
-3. Setup deploy completo para Fly.io:
-   - `Dockerfile` + `fly.toml` + `.dockerignore`
-   - `proxy.cjs`: PORT desde env, CORS dinamico en prod, sirve dist/ estatico en prod
-   - `constants/index.js`: PROXY usa `VITE_PROXY_URL` env var (vacio en prod = mismo origen)
-   - `.env.development`: `VITE_PROXY_URL=http://localhost:3001`
-   - `package.json`: script `start:prod`
-4. Guia de deploy en `src/deploy-guide.md`
+1. Fix BD: `search_path=public` en `sanitizePgCfg()` → resuelve `relation "trades" does not exist` en Supabase
+2. Fix gastos: eliminado `tipo_producto` de INSERT/UPDATE (no existe en schema Supabase)
+3. Fix Express 5: wildcard `"*"` → `/(.*)/ ` en static file serving
+4. Sistema de memoria → este archivo
+5. Deploy Fly.io completo y operativo: `https://mi-trading-fw.fly.dev`
+   - CLAUDE.md actualizado: yo hago deploy automaticamente al cerrar sesion
+6. Telegram webhook bidireccional implementado y desplegado:
+   - `/gasto <importe> <categoria> [nota]` → guarda en Supabase
+   - `/gastos` → resumen del mes
+   - `/categorias` → lista categorias
+   - `/ayuda` → help
+   - Auto-registro de webhook al arrancar (si TG_TOKEN configurado)
 
-### Estado actual
-- Fix BD: aplicado en codigo, pendiente validar en vivo
-- Deploy Fly.io: codigo listo, pendiente ejecutar los comandos del deploy-guide.md
-- Iteracion 2 (Telegram gastos): pendiente
+### Estado actual — PENDIENTE ACTIVAR TELEGRAM
+El codigo esta deployado pero el bot NO responde aun porque faltan los secrets en Fly.io.
+El usuario debe correr UNA VEZ este comando en su terminal:
+
+```bash
+export PATH="$HOME/.fly/bin:$PATH"
+flyctl secrets set \
+  TG_TOKEN="<token del bot>" \
+  TG_CHAT_ID="<tu chat id>" \
+  DB_HOST="aws-1-sa-east-1.pooler.supabase.com" \
+  DB_PORT="5432" \
+  DB_NAME="postgres" \
+  DB_USER="postgres.fwcjolnhghqqbclrbdrc" \
+  DB_PASS="<password supabase>"
+```
+
+Fly.io redeploya automaticamente al setear secrets.
+Despues de eso el bot esta 100% activo.
+
+### Nota Binance
+Binance bloquea IPs de datacenters (Fly.io). Las operaciones de Binance (sync, ordenes) solo funcionan desde el proxy local (`npm run start`). El dashboard en produccion es para monitoreo, gastos y trading log.
 
 ### Proximo paso
-Ejecutar deploy: seguir `src/deploy-guide.md` paso a paso.
-Luego arrancar Iteracion 2: comandos TG para gastos.
+1. Usuario corre el comando de secrets de arriba
+2. Testear bot: enviar /ayuda al bot de Telegram
+3. Si funciona: Iteracion 2 completada ✅
 
 ---
 
