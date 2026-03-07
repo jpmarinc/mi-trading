@@ -1603,6 +1603,143 @@ app.get("/api/gastos/usd-rate", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
+// ── Telegram: webhook bidireccional (gastos via bot) ──────────────────────────
+//
+// Variables de entorno necesarias en Fly.io (flyctl secrets set ...):
+//   TG_TOKEN   → token del bot (el mismo que usas en Maintainers)
+//   TG_CHAT_ID → tu chat ID personal (solo tú puede usar el bot)
+//   DB_HOST    → aws-1-sa-east-1.pooler.supabase.com
+//   DB_PORT    → 5432
+//   DB_NAME    → postgres
+//   DB_USER    → postgres.fwcjolnhghqqbclrbdrc
+//   DB_PASS    → tu password de Supabase
+//
+// El webhook se registra automáticamente al arrancar si TG_TOKEN está configurado.
+
+function getEnvPool() {
+  if (!process.env.DB_HOST || !process.env.DB_USER) return null;
+  return getPool({
+    host:     process.env.DB_HOST,
+    port:     process.env.DB_PORT || "5432",
+    database: process.env.DB_NAME || "postgres",
+    user:     process.env.DB_USER,
+    password: process.env.DB_PASS,
+    ssl:      true,
+  });
+}
+
+async function tgSend(chatId, text) {
+  const token = process.env.TG_TOKEN;
+  if (!token) return;
+  await pf(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method:  "POST",
+    headers: { "Content-Type": "application/json" },
+    body:    JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML" }),
+  }).catch(() => {});
+}
+
+async function tgCmdGasto(chatId, args) {
+  if (args.length < 2)
+    return tgSend(chatId, "Uso: /gasto &lt;importe&gt; &lt;categoria&gt; [nota]\nEj: <code>/gasto 195000 Arriendo Marzo</code>");
+
+  const importe = parseFloat(args[0]);
+  if (isNaN(importe)) return tgSend(chatId, `"${args[0]}" no es un número válido.`);
+
+  const categoria = args[1];
+  const nota      = args.slice(2).join(" ") || null;
+  const fecha     = new Date().toISOString().split("T")[0];
+
+  let usd_equiv = null;
+  try {
+    const r = await pf("https://query1.finance.yahoo.com/v8/finance/chart/CLP=X?interval=1d&range=1d");
+    const d = await r.json();
+    const rate = d?.chart?.result?.[0]?.meta?.regularMarketPrice;
+    if (rate) usd_equiv = parseFloat((importe / rate).toFixed(2));
+  } catch {}
+
+  const pool = getEnvPool();
+  if (!pool) return tgSend(chatId, "Error: BD no configurada en el servidor.");
+
+  try {
+    await pool.query(
+      `INSERT INTO gastos (fecha, importe, moneda, tipo_movimiento, categoria, nota, usd_equiv)
+       VALUES ($1,$2,'CLP','Gasto',$3,$4,$5)`,
+      [fecha, importe, categoria, nota, usd_equiv]
+    );
+    const usdStr = usd_equiv ? ` (~$${usd_equiv} USD)` : "";
+    await tgSend(chatId,
+      `✅ Gasto guardado\n💰 $${importe.toLocaleString("es-CL")} CLP${usdStr}\n📂 ${categoria}${nota ? `\n📝 ${nota}` : ""}`
+    );
+  } catch(e) { await tgSend(chatId, `Error al guardar: ${e.message}`); }
+}
+
+async function tgCmdGastos(chatId) {
+  const pool = getEnvPool();
+  if (!pool) return tgSend(chatId, "Error: BD no configurada en el servidor.");
+  try {
+    const mes = new Date().toISOString().slice(0, 7);
+    const r = await pool.query(
+      `SELECT categoria, SUM(importe) as total
+       FROM gastos
+       WHERE to_char(fecha,'YYYY-MM') = $1 AND tipo_movimiento = 'Gasto' AND deleted_at IS NULL
+       GROUP BY categoria ORDER BY total DESC`,
+      [mes]
+    );
+    if (r.rows.length === 0) return tgSend(chatId, `Sin gastos registrados en ${mes}.`);
+    const total = r.rows.reduce((s, row) => s + parseFloat(row.total), 0);
+    let msg = `📊 <b>Gastos ${mes}</b>\n\n`;
+    for (const row of r.rows) {
+      const pct = ((parseFloat(row.total) / total) * 100).toFixed(0);
+      msg += `• ${row.categoria}: $${parseInt(row.total).toLocaleString("es-CL")} (${pct}%)\n`;
+    }
+    msg += `\n<b>Total: $${Math.round(total).toLocaleString("es-CL")} CLP</b>`;
+    await tgSend(chatId, msg);
+  } catch(e) { await tgSend(chatId, `Error: ${e.message}`); }
+}
+
+async function tgCmdCategorias(chatId) {
+  const pool = getEnvPool();
+  if (!pool) return tgSend(chatId, "Error: BD no configurada en el servidor.");
+  try {
+    const r = await pool.query(`SELECT nombre FROM gasto_categorias ORDER BY orden, nombre`);
+    const cats = r.rows.map(row => `• ${row.nombre}`).join("\n");
+    await tgSend(chatId, `📂 <b>Categorías:</b>\n\n${cats}`);
+  } catch(e) { await tgSend(chatId, `Error: ${e.message}`); }
+}
+
+async function tgCmdAyuda(chatId) {
+  await tgSend(chatId, [
+    "🤖 <b>Comandos disponibles:</b>",
+    "",
+    "/gasto &lt;importe&gt; &lt;categoria&gt; [nota]",
+    "  Registra un gasto del mes actual.",
+    "  Ej: <code>/gasto 195000 Arriendo Marzo</code>",
+    "",
+    "/gastos — Resumen del mes actual por categoría",
+    "/categorias — Lista las categorías disponibles",
+    "/ayuda — Este mensaje",
+  ].join("\n"));
+}
+
+app.post("/api/telegram/webhook", async (req, res) => {
+  res.sendStatus(200); // Responder inmediato a Telegram
+  const msg = req.body?.message;
+  if (!msg?.text) return;
+
+  const chatId  = String(msg.chat.id);
+  const allowed = process.env.TG_CHAT_ID;
+  if (allowed && chatId !== String(allowed)) return; // Solo el dueño
+
+  const parts = msg.text.trim().split(/\s+/);
+  const cmd   = parts[0].split("@")[0].toLowerCase(); // ignorar @botname
+  if (cmd === "/gasto" || cmd === "/g")     await tgCmdGasto(chatId, parts.slice(1));
+  else if (cmd === "/gastos")               await tgCmdGastos(chatId);
+  else if (cmd === "/categorias" || cmd === "/cats") await tgCmdCategorias(chatId);
+  else if (cmd === "/ayuda" || cmd === "/help")      await tgCmdAyuda(chatId);
+  else await tgSend(chatId, "Comando no reconocido. Usa /ayuda.");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // Servir React build en producción (Fly.io)
 if (IS_PROD) {
   const distPath = path.join(__dirname, "..", "dist");
@@ -1612,6 +1749,19 @@ if (IS_PROD) {
 
 app.listen(PORT, () => {
   console.log(`\n✅  Proxy v4 → http://localhost:${PORT}`);
+
+  // Auto-registrar webhook de Telegram al arrancar (solo en producción con token configurado)
+  if (IS_PROD && process.env.TG_TOKEN && process.env.FLY_APP_NAME) {
+    const webhookUrl = `https://${process.env.FLY_APP_NAME}.fly.dev/api/telegram/webhook`;
+    pf(`https://api.telegram.org/bot${process.env.TG_TOKEN}/setWebhook`, {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body:    JSON.stringify({ url: webhookUrl, allowed_updates: ["message"] }),
+    }).then(r => r.json()).then(d => {
+      if (d.ok) console.log(`✅  TG webhook activo: ${webhookUrl}`);
+      else      console.log(`⚠️   TG webhook error: ${JSON.stringify(d)}`);
+    }).catch(e => console.log(`⚠️   TG webhook: ${e.message}`));
+  }
   console.log(`   Binance spot        → GET  /api/binance/prices?symbols=BTCUSDT`);
   console.log(`   Binance futures px  → GET  /api/binance/futures?symbols=COINUSDT`);
   console.log(`   Binance test        → POST /api/binance/ping`);
