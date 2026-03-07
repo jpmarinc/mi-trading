@@ -42,10 +42,21 @@ Despues de eso el bot esta 100% activo.
 ### Nota Binance
 Binance bloquea IPs de datacenters (Fly.io). Las operaciones de Binance (sync, ordenes) solo funcionan desde el proxy local (`npm run start`). El dashboard en produccion es para monitoreo, gastos y trading log.
 
-### Proximo paso
-1. Usuario corre el comando de secrets de arriba
-2. Testear bot: enviar /ayuda al bot de Telegram
-3. Si funciona: Iteracion 2 completada ✅
+### ⚠️ RECORDAR AL INICIO DE LA PROXIMA SESION
+Correr los secrets de Fly.io para activar el bot de Telegram (uno por uno):
+
+```bash
+flyctl secrets set TG_TOKEN="tu_token_real"
+flyctl secrets set TG_CHAT_ID="tu_chat_id_real"
+flyctl secrets set DB_HOST="aws-1-sa-east-1.pooler.supabase.com"
+flyctl secrets set DB_PORT="5432"
+flyctl secrets set DB_NAME="postgres"
+flyctl secrets set DB_USER="postgres.fwcjolnhghqqbclrbdrc"
+flyctl secrets set DB_PASS="tu_password_supabase"
+```
+
+Valores en: Maintainers → Telegram (token + chat id) y Maintainers → BD (password Supabase).
+Despues testear enviando /ayuda al bot.
 
 ---
 
