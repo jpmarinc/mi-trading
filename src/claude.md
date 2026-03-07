@@ -7,17 +7,20 @@ Los resúmenes de cambios van en `changelog.md`, no acá.
 
 ## Reglas de sesión
 
-1. **Al iniciar:** Leer este archivo + `comentarios.md`.
+1. **Al iniciar:** Leer este archivo + `comentarios.md` + `memoria.md`.
+   `memoria.md` contiene el resumen de la ultima sesion y el estado actual — leerlo SIEMPRE para retomar donde quedamos.
    Revisar backlog activo antes de ejecutar cualquier tarea.
    **NUNCA guardar credenciales en ningún archivo del proyecto (ni aquí, ni código, ni changelog).**
 2. **Al completar cada ítem de feedback:** Marcar ✅ inmediatamente en `comentarios.md` (no esperar al final de sesión).
-   **Al finalizar:** Agregar entrada en `changelog.md` + verificar que todos los ítems completados tengan ✅ en `comentarios.md` + **ejecutar deploy completo a GitHub** + enviar resumen en el chat.
-3. **Deploy obligatorio a GitHub (nunca saltar):**
+   **Al finalizar:** Agregar entrada en `changelog.md` + actualizar `memoria.md` con resumen de sesion + verificar que todos los ítems completados tengan ✅ en `comentarios.md` + **ejecutar deploy completo a GitHub** + enviar resumen en el chat.
+3. **Deploy obligatorio a GitHub + Fly.io (nunca saltar):**
    - `git status` (para verificar)
    - `git add .`
-   - `git commit -m "Sesión $(date +%Y-%m-%d) — [resumen corto del changelog]"`  
+   - `git commit -m "Sesión $(date +%Y-%m-%d) — [resumen corto del changelog]"`
      (ejemplo: "Sesión 2026-03-01 — fix fees + PerformanceTab BD")
    - `git push origin main`
+   - `export PATH="$HOME/.fly/bin:$PATH" && flyctl deploy` (deploy a Fly.io)
+   - Verificar que el deploy termina sin errores — si falla, diagnosticar y corregir antes de cerrar sesión.
    - Si hay cambios en archivos nuevos o .env: `git add -f .env.example` (nunca subir .env real)
 4. **Nunca marcar tarea completa** sin validar: `npm run build` pasa, 
    cálculos financieros correctos, sin funcionalidad rota.
