@@ -1499,17 +1499,17 @@ app.post("/api/gastos/list", async (req, res) => {
 });
 
 // ── Gastos: crear ─────────────────────────────────────────────────────────────
-// POST /api/gastos  { config, fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento, categoria, nota, usd_equiv }
+// POST /api/gastos  { config, fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_movimiento, categoria, nota, usd_equiv }
 app.post("/api/gastos", async (req, res) => {
-  const { config, fecha, importe, moneda = "CLP", concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento = "Cargo", categoria, nota, usd_equiv } = req.body;
+  const { config, fecha, importe, moneda = "CLP", concepto, entidad, nombre_producto, tipo_movimiento = "Cargo", categoria, nota, usd_equiv } = req.body;
   if (!fecha || !importe || !categoria) return res.status(400).json({ error: "fecha, importe y categoria son requeridos" });
   const pool = getPool(config);
   if (!pool) return res.status(503).json({ error: "pg no instalado" });
   try {
     const r = await pool.query(
-      `INSERT INTO gastos (fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento, categoria, nota, usd_equiv)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
-      [fecha, parseFloat(importe), moneda, concepto || null, entidad || null, nombre_producto || null, tipo_producto || null, tipo_movimiento, categoria, nota || null, usd_equiv ? parseFloat(usd_equiv) : null]
+      `INSERT INTO gastos (fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_movimiento, categoria, nota, usd_equiv)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [fecha, parseFloat(importe), moneda, concepto || null, entidad || null, nombre_producto || null, tipo_movimiento, categoria, nota || null, usd_equiv ? parseFloat(usd_equiv) : null]
     );
     res.json({ ok: true, row: r.rows[0] });
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1518,14 +1518,14 @@ app.post("/api/gastos", async (req, res) => {
 // ── Gastos: actualizar ────────────────────────────────────────────────────────
 // PUT /api/gastos/:id  { config, ...fields }
 app.put("/api/gastos/:id", async (req, res) => {
-  const { config, fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_producto, tipo_movimiento, categoria, nota, usd_equiv } = req.body;
+  const { config, fecha, importe, moneda, concepto, entidad, nombre_producto, tipo_movimiento, categoria, nota, usd_equiv } = req.body;
   const pool = getPool(config);
   if (!pool) return res.status(503).json({ error: "pg no instalado" });
   try {
     const r = await pool.query(
-      `UPDATE gastos SET fecha=$1, importe=$2, moneda=$3, concepto=$4, entidad=$5, nombre_producto=$6, tipo_producto=$7, tipo_movimiento=$8, categoria=$9, nota=$10, usd_equiv=$11
-       WHERE id=$12 AND deleted_at IS NULL RETURNING *`,
-      [fecha, parseFloat(importe), moneda || "CLP", concepto || null, entidad || null, nombre_producto || null, tipo_producto || null, tipo_movimiento || "Cargo", categoria, nota || null, usd_equiv ? parseFloat(usd_equiv) : null, req.params.id]
+      `UPDATE gastos SET fecha=$1, importe=$2, moneda=$3, concepto=$4, entidad=$5, nombre_producto=$6, tipo_movimiento=$7, categoria=$8, nota=$9, usd_equiv=$10
+       WHERE id=$11 AND deleted_at IS NULL RETURNING *`,
+      [fecha, parseFloat(importe), moneda || "CLP", concepto || null, entidad || null, nombre_producto || null, tipo_movimiento || "Cargo", categoria, nota || null, usd_equiv ? parseFloat(usd_equiv) : null, req.params.id]
     );
     if (r.rowCount === 0) return res.status(404).json({ error: "Gasto no encontrado" });
     res.json({ ok: true, row: r.rows[0] });
